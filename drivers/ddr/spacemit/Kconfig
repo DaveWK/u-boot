@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: GPL-2.0+
+
+config SPACEMIT_K1_DDR
+	bool "DDR init for SpacemiT K1 (LPDDR4X)"
+	depends on SPACEMIT_K1
+	help
+	  Build the LPDDR4X silicon init and frequency-switch code for the
+	  SpacemiT K1 SoC into U-Boot SPL. Required if you want SPL to bring
+	  up DRAM directly (i.e. boot without the SpacemiT FSBL).
+
+config SPL_SPACEMIT_K1_DDR
+	bool "DDR init for SpacemiT K1 in SPL"
+	depends on SPL && SPACEMIT_K1_DDR
+	default y
+	help
+	  Build the K1 DDR init code into U-Boot SPL. This is the phase
+	  where DDR is actually programmed; U-Boot proper does not need
+	  this code.
+
+config K1_X_BOARD_ASIC
+	bool "Spacemit K1 ASIC code path"
+	depends on SPACEMIT_K1_DDR
+	default y
+	help
+	  Selects the ASIC (production silicon) code path inside the
+	  lifted vendor DDR init, instead of the FPGA emulator paths.
+
+config SPACEMIT_K1_DDR_QOS
+	bool "Spacemit K1 DDR QoS programming"
+	depends on SPACEMIT_K1_DDR
+	help
+	  Program the K1 DDR QoS table from SPL.
+
+config SPACEMIT_K1_DDR_FREQ_SWITCH
+	bool "Spacemit K1 DDR runtime frequency switching"
+	depends on SPACEMIT_K1_DDR
+	help
+	  Allow runtime DDR clock frequency changes from U-Boot proper
+	  (DYNAMIC_DDR_CLK_FREQ).

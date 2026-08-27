@@ -45,3 +45,5 @@ config SPD_EEPROM
 	  Get DDR timing information from an I2C EEPROM. Common with pluggable
 	  memory modules such as SODIMMs. You must define SPD_EEPROM_ADDRESS
 	  to the I2C address of the SPD EEPROM.
+
+source "drivers/ddr/spacemit/Kconfig"

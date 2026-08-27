@@ -135,3 +135,4 @@ obj-$(CONFIG_DM_HWSPINLOCK) += hwspinlock/
 endif
 
 obj-y += soc/
+obj-$(CONFIG_$(PHASE_)SPACEMIT_K1_DDR) += ddr/spacemit/
