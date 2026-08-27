@@ -23,6 +23,7 @@
 #include <u-boot/crc.h>
 #include "ddr_freq.h"
 #include <linux/delay.h>
+#include "ddr_training_info.h"
 
 #define BOOT_PP		0
 #define PMUA_REG_BASE	0xd4282800

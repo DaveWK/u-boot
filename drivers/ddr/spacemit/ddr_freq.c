@@ -9,6 +9,7 @@
 #include <linux/errno.h>
 #include <linux/delay.h>
 #include "ddr_freq.h"
+#include "ddr_training_info.h"
 
 #define AP_ALLOW_FREQ_CHG			BIT(18)
 #define MC_REG_TABLE_EN				BIT(10)

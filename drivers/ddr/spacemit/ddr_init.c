@@ -17,6 +17,7 @@
 #include <asm/io.h>
 #include <dm/device_compat.h>
 #include <linux/sizes.h>
+#include "ddr_training_info.h"
 #ifdef CONFIG_SPACEMIT_K1_DDR_FPGA
 #include "ddr_init_fpga.h"
 #endif
