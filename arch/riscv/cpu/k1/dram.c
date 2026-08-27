@@ -8,6 +8,7 @@
 #include <config.h>
 #include <bitfield.h>
 #include <fdt_support.h>
+#include <fdtdec.h>
 #include <linux/sizes.h>
 
 #define DDR_BASE 0xC0000000
@@ -41,10 +42,28 @@ static phys_size_t ddr_map_size(u32 val)
 phys_size_t ddr_get_density(void)
 {
 	phys_size_t cs0_size = ddr_map_size(readl((void *)DDR_BASE + 0x200));
-	phys_size_t cs1_size = ddr_map_size(readl((void *)DDR_BASE + 0x208));
-	phys_size_t ddr_size = cs0_size + cs1_size;
+	phys_size_t cs1_size = 0;
+	int node;
+	u32 cs_num;
 
-	return ddr_size;
+	/*
+	 * The CS1 MAP register (0x208) reads as enabled with a valid density
+	 * even on single-rank parts where CS1 is unpopulated, so counting it
+	 * unconditionally double-counts and reports 2x the real size (e.g. a
+	 * 2 GiB OrangePi R2S shows up as 4 GiB, which then makes
+	 * dram_init_banksize() hand out a phantom bank at 0x1_0000_0000 and
+	 * fault).  Honour the DT "cs-num" from the DDR controller node when
+	 * present; fall back to the old count-both behaviour for boards that
+	 * do not describe it.
+	 */
+	node = fdt_node_offset_by_compatible(gd->fdt_blob, -1, "spacemit,k1-ddr");
+	cs_num = (node >= 0) ?
+		 fdtdec_get_uint(gd->fdt_blob, node, "cs-num", 2) : 2;
+
+	if (cs_num > 1)
+		cs1_size = ddr_map_size(readl((void *)DDR_BASE + 0x208));
+
+	return cs0_size + cs1_size;
 }
 
 int dram_init(void)
