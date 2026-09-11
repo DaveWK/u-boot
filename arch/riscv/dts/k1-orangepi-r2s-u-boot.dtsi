@@ -105,3 +105,21 @@
 	max-frequency = <204800000>;
 	bootph-pre-ram;
 };
+
+/*
+ * The SpacemiT P1 PMIC on the power-management I2C bus is described upstream.
+ * board_init() raises buck1, the core rail, to the 1.6 GHz operating point
+ * before switching the CPU clusters onto PLL3, and looks it up by the name
+ * "vdd_core". OpenSBI's "spacemit-p1-reset" system-reset device binds to the
+ * same node; without it OpenSBI does not advertise SBI_EXT_SRST and every OS
+ * that reboots through SBI halts instead of resetting.
+ */
+&i2c8 {
+	pmic@41 {
+		regulators {
+			buck1 {
+				regulator-name = "vdd_core";
+			};
+		};
+	};
+};
