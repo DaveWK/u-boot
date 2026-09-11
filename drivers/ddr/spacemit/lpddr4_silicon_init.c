@@ -1359,6 +1359,13 @@ static void top_training_fp_all(u32 ddr_base, u32 cs_num, u32 boot_pp, void *inp
 	memcpy((void*)DDR_TRAINING_DATA_BASE, lpddr4_training_img, sizeof(lpddr4_training_img));
 	flush_lenth = round_up(sizeof(lpddr4_training_img), 64);
 	flush_dcache_range(DDR_TRAINING_DATA_BASE, DDR_TRAINING_DATA_BASE + flush_lenth);
+	/*
+	 * The image is about to be executed from where it was just written.
+	 * fence.i is what orders the stores before the instruction fetches
+	 * (upstream's ddr_fw.bin path does the same); the range flush above
+	 * is a no-op in the SPL, where no Zicbom block size is established.
+	 */
+	invalidate_icache_all();
 
 	training = (void (*)(void * param))DDR_TRAINING_DATA_BASE;
 	training(to_traning_param);
