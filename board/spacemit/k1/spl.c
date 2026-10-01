@@ -4,6 +4,7 @@
  */
 
 #include <asm/io.h>
+#include <asm/sections.h>
 #include <binman.h>
 #include <binman_sym.h>
 #include <clk.h>
@@ -469,6 +470,15 @@ void board_init_f(ulong dummy)
 {
 	u32 mode;
 	int ret;
+
+	/*
+	 * The generic RISC-V SPL entry clears .bss only after board_init_f()
+	 * returns, but this board brings DRAM up from board_init_f() and the
+	 * DDR driver keeps its configuration and state in .bss globals.  Clear
+	 * .bss first so they start out zero, as the vendor SPL's entry did;
+	 * nothing before this point has stored anything there.
+	 */
+	memset(__bss_start, 0, __bss_end - __bss_start);
 
 	mode = read_boot_mode();
 	write_boot_mode(mode);
