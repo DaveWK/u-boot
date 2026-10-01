@@ -1,0 +1,115 @@
+// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
+
+#include "binman.dtsi"
+
+/*
+ * U-Boot-only additions for the OrangePi RV2. The hardware description itself
+ * comes from the upstream device tree (spacemit/k1-orangepi-rv2.dts); this
+ * file adds what SPL needs.
+ */
+
+&{/soc} {
+	bootph-pre-ram;
+
+	/*
+	 * The DDR controller is not described upstream. SPL's LPDDR4X init and
+	 * ddr_get_density() both read their configuration from here.
+	 *
+	 * datarate 2400 is the rate this board runs (4 GiB LPDDR4X, single
+	 * rank). The frequency table also offers 3200, but the same DRAM on the
+	 * OrangePi R2S failed the SPL DRAM pattern test at 3200 on 2026-08-20;
+	 * it has not been tried on this board.
+	 *
+	 * cs-num 1: the K1's CS1 MAP register reads back populated even when
+	 * CS1 is not, so counting both chip selects double-counts a single-rank
+	 * board; the vendor firmware, which counts both, reports 8 GiB on the
+	 * 4 GiB unit. An 8 GiB dual-rank RV2 needs cs-num 2.
+	 */
+	dramc: ddr@c0000000 {
+		compatible = "spacemit,k1-ddr";
+		reg = <0x0 0xc0000000 0x0 0x400000>;
+		datarate = <2400>;
+		cs-num = <1>;
+		type = "LPDDR4X";
+		bootph-pre-ram;
+	};
+};
+
+&{/cpus} {
+	bootph-pre-ram;
+};
+
+/*
+ * Clock infrastructure. The K1 clock driver is a DM/CCF driver bound to these
+ * syscon and oscillator nodes, so every one of them has to exist in the SPL
+ * device tree -- without them spl_early_init() fails in uclass setup (-96)
+ * before the console is even up.
+ */
+&osc_32k {
+	bootph-pre-ram;
+};
+
+&vctcxo_1m {
+	bootph-pre-ram;
+};
+
+&vctcxo_3m {
+	bootph-pre-ram;
+};
+
+&vctcxo_24m {
+	bootph-pre-ram;
+};
+
+&pll {
+	bootph-pre-ram;
+};
+
+&syscon_mpmu {
+	bootph-pre-ram;
+};
+
+&syscon_apmu {
+	bootph-pre-ram;
+};
+
+&syscon_apbc {
+	bootph-pre-ram;
+};
+
+&cpu_0 {
+	bootph-pre-ram;
+};
+
+&clint {
+	clock-frequency = <24000000>;
+	bootph-pre-ram;
+};
+
+&uart0 {
+	bootph-pre-ram;
+};
+
+/*
+ * The microSD slot is an SPL boot device. Its parent simple-bus must be bound
+ * in SPL too, or DM never scans down to it. The io clock runs at 204.8 MHz
+ * (PLL1 409.6 MHz / 2): the OS reads the live rate into the 8-bit SDHCI v3
+ * base-clock field, which 409.6 MHz overflows. no-1-8-v keeps the card at
+ * 3.3 V, so the OS does not inherit a card switched to 1.8 V signalling. The
+ * card-detect line is pulled up, as on the MusePi Pro.
+ */
+&{/soc/storage-bus} {
+	bootph-pre-ram;
+};
+
+/* The eMMC module socket: the same 204.8 MHz io clock. */
+&emmc {
+	max-frequency = <204800000>;
+};
+
+&sdhci0 {
+	cd-gpios = <&gpio K1_GPIO(80) (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+	max-frequency = <204800000>;
+	no-1-8-v;
+	bootph-pre-ram;
+};
