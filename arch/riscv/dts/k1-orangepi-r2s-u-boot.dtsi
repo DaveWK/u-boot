@@ -7,6 +7,17 @@
  * comes from the upstream device tree (spacemit/k1-orangepi-r2s.dts).
  */
 
+/*
+ * The eMMC is the SPL boot device, which spl_boot_device() names as
+ * BOOT_DEVICE_MMC1, MMC device 0, as on the other K1 boards. With
+ * CONFIG_SPL_DM_SEQ_ALIAS this alias keeps it device 0 whatever else binds.
+ */
+/ {
+	aliases {
+		mmc0 = &emmc;
+	};
+};
+
 &{/soc} {
 	bootph-pre-ram;
 
