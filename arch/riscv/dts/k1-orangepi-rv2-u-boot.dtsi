@@ -113,3 +113,28 @@
 	no-1-8-v;
 	bootph-pre-ram;
 };
+
+/*
+ * PCIe, so that U-Boot can boot from an NVMe drive. Upstream's RV2 tree
+ * describes both ports (pcie1 and pcie2) with the GPIO116 slot supply.
+ *
+ * PERST# only, as in FreeBSD's k1-pinctrl.dtsi: with CLKREQ# muxed the
+ * controller gates its DBI clock whenever the endpoint leaves CLKREQ#
+ * high, and the next DBI access hangs the hart.
+ */
+&pcie1_3_cfg {
+	pcie1-3-pins {
+		pinmux = <K1_PADCONF(59, 4)>;	/* PERST# */
+	};
+};
+
+&pcie2_4_cfg {
+	pcie2-4-pins {
+		pinmux = <K1_PADCONF(62, 4)>;	/* PERST# */
+	};
+};
+
+/* Port B carries two lanes. */
+&pcie1 {
+	num-lanes = <2>;
+};
