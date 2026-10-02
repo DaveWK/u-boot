@@ -145,7 +145,9 @@ static void k1_combo_phy_sel(struct k1_pcie_phy *k1_phy, bool usb)
 
 int k1_pcie_combo_phy_calibrate(struct udevice *dev, struct k1_pcie_phy *k1_phy)
 {
+	void __iomem *apmu = k1_phy->apmu_base;
 	void __iomem *regs = k1_phy->regs;
+	u32 ctrl, sel;
 	int ret = 0;
 	u32 val;
 
@@ -153,15 +155,27 @@ int k1_pcie_combo_phy_calibrate(struct udevice *dev, struct k1_pcie_phy *k1_phy)
 		return 0;
 
 	/*
+	 * Remember the port A settings changed below, so they can be
+	 * put back once calibration is done.
+	 */
+	ctrl = readl(apmu + PCIE_CLK_RES_CTRL);
+	sel = readl(apmu + PMUA_USB_PHY_CTRL0) & COMBO_PHY_SEL;
+
+	/*
 	 * Initialize the APMU control register: set RC mode, enable
 	 * clock gates (bits 0-5), then release the PHY hold.  The PHY
-	 * (global) reset was deasserted at probe.
+	 * (global) reset was deasserted at probe.  The hold is left
+	 * released, as Linux does.
 	 */
-	val = readl(k1_phy->apmu_base + PCIE_CLK_RES_CTRL);
-	val |= DEVICE_TYPE_RC | PCIE_APP_HOLD_PHY_RST | APMU_CLK_GATE_MASK;
-	writel(val, k1_phy->apmu_base + PCIE_CLK_RES_CTRL);
+	val = ctrl | DEVICE_TYPE_RC | PCIE_APP_HOLD_PHY_RST | APMU_CLK_GATE_MASK;
+	writel(val, apmu + PCIE_CLK_RES_CTRL);
 	val &= ~PCIE_APP_HOLD_PHY_RST;
-	writel(val, k1_phy->apmu_base + PCIE_CLK_RES_CTRL);
+	writel(val, apmu + PCIE_CLK_RES_CTRL);
+
+	/* Calibration may already have been done, e.g. by an earlier stage */
+	val = readl(regs + PCIE_RCAL_RESULT);
+	if (val & R_TUNE_DONE)
+		goto out;
 
 	/* Put the combo PHY into PCIe mode for calibration */
 	k1_combo_phy_sel(k1_phy, false);
@@ -173,8 +187,23 @@ int k1_pcie_combo_phy_calibrate(struct udevice *dev, struct k1_pcie_phy *k1_phy)
 	if (ret)
 		dev_err(dev, "PHY calib timeout, RCAL=0x%08x\n", val);
 
+out:
 	if (!ret)
 		k1_phy_rterm_set(val);
+
+	/*
+	 * Put back the RC mode, the port A clock gates and resets and the
+	 * PCIe/USB 3 mode select as they were found, so that calibrating
+	 * leaves port A as it was (Linux disables the clocks and asserts
+	 * the resets again).  If the PCIe port A controller had already
+	 * set them up, they stay set up.
+	 */
+	val = readl(apmu + PCIE_CLK_RES_CTRL);
+	val &= ~(DEVICE_TYPE_RC | APMU_CLK_GATE_MASK);
+	val |= ctrl & (DEVICE_TYPE_RC | APMU_CLK_GATE_MASK);
+	writel(val, apmu + PCIE_CLK_RES_CTRL);
+
+	k1_combo_phy_sel(k1_phy, sel);
 
 	return ret;
 }
