@@ -9,6 +9,7 @@
  */
 
 #include <dm/device.h>
+#include <dm/device-internal.h>
 #include <dm/uclass.h>
 #include <div64.h>
 #include <regmap.h>
@@ -136,26 +137,63 @@ ccu_mix_calc_best_rate(struct clk *clk, unsigned long rate,
 	return best_rate;
 }
 
+/*
+ * U-Boot's CCF has no determine_rate, so the parent is chosen here along with
+ * the divider. The mux is programmed from the chosen parent rather than left
+ * where it was found: init falls back to parents[0] when the hardware mux
+ * selects a source this build does not list (the SPL lists only a subset), and
+ * the clock would otherwise keep running from that source at a rate nobody
+ * computed. Mux and divider are written together and latched by one frequency
+ * change, and nothing is written when both already match, so a clock left
+ * running by an earlier stage is not disturbed.
+ */
 static unsigned long ccu_mix_set_rate(struct clk *clk, unsigned long rate)
 {
 	struct ccu_mix *mix = clk_to_ccu_mix(clk);
 	struct ccu_common *common = &mix->common;
 	struct ccu_div_config *div = &mix->div;
-	u32 current_div, target_div, mask;
+	struct ccu_mux_config *mux = &mix->mux;
+	struct clk *parent = NULL;
+	unsigned long parent_rate;
+	u32 target_div = 0, mask, val;
+	int i, ret;
 
-	ccu_mix_calc_best_rate(clk, rate, NULL, NULL, &target_div);
-
-	current_div = ccu_read(common, ctrl) >> div->shift;
-	current_div &= (1 << div->width) - 1;
-
-	if (current_div == target_div)
-		return 0;
+	ccu_mix_calc_best_rate(clk, rate, &parent, &parent_rate, &target_div);
 
 	mask = GENMASK(div->width + div->shift - 1, div->shift);
+	val = target_div << div->shift;
 
-	ccu_update(common, ctrl, mask, target_div << div->shift);
+	if (mux->width && parent) {
+		for (i = 0; i < common->num_parents; i++)
+			if (!strcmp(parent->dev->name, common->parents[i]))
+				break;
+		if (i == common->num_parents)
+			return -EINVAL;
+		mask |= GENMASK(mux->width + mux->shift - 1, mux->shift);
+		val |= i << mux->shift;
+	} else {
+		parent = NULL;
+	}
 
-	return ccu_mix_trigger_fc(clk);
+	if ((ccu_read(common, ctrl) & mask) == val)
+		return 0;
+
+	if (parent && clk->dev->parent != parent->dev) {
+		ret = clk_enable(parent);
+		if (ret)
+			return ret;
+	}
+
+	ccu_update(common, ctrl, mask, val);
+
+	ret = ccu_mix_trigger_fc(clk);
+	if (ret)
+		return ret;
+
+	if (parent && clk->dev->parent != parent->dev)
+		return device_reparent(clk->dev, parent->dev);
+
+	return 0;
 }
 
 static u8 ccu_mux_get_parent(struct clk *clk)
