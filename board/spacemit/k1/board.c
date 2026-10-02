@@ -3,142 +3,217 @@
  * Copyright (c) 2024, Kongyang Liu <seashell11234455@gmail.com>
  */
 
-#include <asm/io.h>
+#include <clk.h>
+#include <dm.h>
 #include <dm/ofnode.h>
+#include <dm/uclass.h>
 #include <init.h>
-#include <linux/bitops.h>
-#include <linux/delay.h>
-#include <linux/iopoll.h>
 #include <log.h>
+#include <linux/delay.h>
+#include <linux/err.h>
+#include <linux/kernel.h>
 #include <power/regulator.h>
-#include <soc/spacemit/k1-syscon.h>
 
-/* PLL3 as the ROM leaves it: programmed for 3200 MHz, not powered */
-#define PLL3_SWCR1_3200MHZ		0x0050dd67
-#define PLL3_SWCR3_3200MHZ		0x43eaaaab
-#define PLL3_SWCR3_PWR_ON		BIT(31)
-#define PLL3_SWCR2_D2_EN		BIT(1)
+#define K1_NUM_CLUSTERS		2
 
-/* APMU CPU_Cn_CLK_CTRL */
-#define CPU_CLK_FC_REQ			BIT(12)
-#define CPU_CLK_HI_SRC_PLL3_D1		BIT(13)	/* 0 = pll3_d2 */
-#define CPU_CLK_SRC_MASK		GENMASK(2, 0)
-#define CPU_CLK_SRC_HI			7	/* cpu_cN_hi_clk */
+/*
+ * The P1 PMIC reads back the voltage selector it was given, not its output,
+ * and moving the clusters onto a faster clock while the core rail is still
+ * low hangs the SoC. Give a raised rail this long on top of its declared ramp
+ * before the first switch.
+ */
+#define K1_CPU_SUPPLY_SETTLE_US	2000
 
-#define VDD_CORE_1P6GHZ_UV		1050000
+struct k1_cluster {
+	struct udevice *cpu;		/* first CPU of the cluster */
+	struct clk clk;
+	struct udevice *supply;
+	ulong hz;
+	int uv;
+};
 
-static void __iomem *k1_syscon_base(const char *compat)
+static const char *k1_supply_name(struct udevice *supply)
 {
-	ofnode node = ofnode_by_compatible(ofnode_null(), compat);
-	fdt_addr_t addr;
+	struct dm_regulator_uclass_plat *plat = dev_get_uclass_plat(supply);
 
-	if (!ofnode_valid(node))
-		return NULL;
-	addr = ofnode_get_addr(node);
-	if (addr == FDT_ADDR_T_NONE)
-		return NULL;
-	return (void __iomem *)addr;
+	return plat->name;
 }
 
-static int k1_cpu_cluster_switch(void __iomem *ctrl)
+/* The fastest operating point of @table that @supply may provide */
+static int k1_cpu_find_opp(ofnode table, struct udevice *supply,
+			   ulong *hz, int *uv)
 {
-	u32 val;
+	struct dm_regulator_uclass_plat *plat = dev_get_uclass_plat(supply);
+	u64 best = 0;
+	ofnode opp;
 
-	val = readl(ctrl);
-	val &= ~(CPU_CLK_SRC_MASK | CPU_CLK_HI_SRC_PLL3_D1);
-	val |= CPU_CLK_SRC_HI;
-	writel(val, ctrl);
-	writel(val | CPU_CLK_FC_REQ, ctrl);
+	if (!ofnode_device_is_compatible(table, "operating-points-v2"))
+		return -EINVAL;
 
-	return readl_poll_timeout(ctrl, val, !(val & CPU_CLK_FC_REQ), 10000);
+	ofnode_for_each_subnode(opp, table) {
+		u64 rate;
+		u32 volt;
+
+		if (!ofnode_is_enabled(opp) ||
+		    ofnode_read_bool(opp, "turbo-mode"))
+			continue;
+		if (ofnode_read_u64(opp, "opp-hz", &rate) ||
+		    ofnode_read_u32_index(opp, "opp-microvolt", 0, &volt))
+			continue;
+		if (plat->max_uV != -ENODATA && volt > plat->max_uV)
+			continue;
+		if (rate <= best)
+			continue;
+
+		best = rate;
+		*uv = volt;
+	}
+	if (!best)
+		return -ENOENT;
+
+	*hz = best;
+
+	return 0;
 }
 
 /*
- * Bring both CPU clusters to 1.6 GHz.
- *
- * Out of the ROM the clusters run from pll1_d4_614p4 (about 300 MHz at the
- * core after the fabric dividers), PLL3 is programmed for 3200 MHz but not
- * powered, and the core rail sits at 0.90 V.  1.6 GHz is PLL3/2 through
- * the cluster mux, and the vendor operating point for it is 1.05 V.
- *
- * The rail is raised first and the switch is skipped if that is not
- * possible (no vdd_core regulator described, or its readback disagrees):
- * changing the clock at 0.90 V hangs the SoC immediately.  Every step
- * checks the state it expects and stops without touching the clock if the
- * registers are not as the ROM leaves them, so an unfamiliar PLL setting
- * is left alone rather than reprogrammed blind.
+ * One entry per distinct CPU clock, each with the operating point it is to
+ * run at and the supply that point needs.
  */
-static void k1_cpu_1p6ghz(void)
+static int k1_cpu_get_clusters(struct k1_cluster *cl, int *num)
 {
-	void __iomem *apbs, *mpmu, *apmu;
-	struct udevice *vdd_core;
-	u32 swcr1, swcr3, val;
-	int ret;
+	struct udevice *cpu;
+	struct uclass *uc;
+	int n = 0, i, ret;
 
-	apbs = k1_syscon_base("spacemit,k1-pll");
-	mpmu = k1_syscon_base("spacemit,k1-syscon-mpmu");
-	apmu = k1_syscon_base("spacemit,k1-syscon-apmu");
-	if (!apbs || !mpmu || !apmu)
+	uclass_id_foreach_dev(UCLASS_CPU, cpu, uc) {
+		struct k1_cluster *c;
+		struct clk clk;
+		ofnode table;
+
+		ret = clk_get_by_index(cpu, 0, &clk);
+		if (ret) {
+			log_info("CPU: no clock for %s (%d), staying on the boot clock\n",
+				 cpu->name, ret);
+			return ret;
+		}
+		for (i = 0; i < n; i++)
+			if (cl[i].clk.dev == clk.dev && cl[i].clk.id == clk.id)
+				break;
+		if (i < n)
+			continue;
+		if (n == K1_NUM_CLUSTERS)
+			return -E2BIG;
+
+		c = &cl[n];
+		c->cpu = cpu;
+		c->clk = clk;
+
+		ret = device_get_supply_regulator(cpu, "cpu-supply",
+						  &c->supply);
+		if (ret) {
+			log_info("CPU: no cpu-supply for %s (%d), staying on the boot clock\n",
+				 cpu->name, ret);
+			return ret;
+		}
+
+		table = ofnode_parse_phandle(dev_ofnode(cpu),
+					     "operating-points-v2", 0);
+		ret = k1_cpu_find_opp(table, c->supply, &c->hz, &c->uv);
+		if (ret) {
+			log_info("CPU: no operating point for %s (%d), staying on the boot clock\n",
+				 cpu->name, ret);
+			return ret;
+		}
+		n++;
+	}
+	if (!n)
+		return -ENODEV;
+
+	*num = n;
+
+	return 0;
+}
+
+/*
+ * Raise every CPU supply to the highest voltage that the operating points
+ * of the clusters on it need, and confirm it by reading it back. Nothing is
+ * lowered.
+ */
+static int k1_cpu_raise_supplies(struct k1_cluster *cl, int num)
+{
+	bool raised = false;
+	int i, j, ret;
+
+	for (i = 0; i < num; i++) {
+		struct udevice *supply = cl[i].supply;
+		int uv = cl[i].uv;
+		int cur;
+
+		for (j = 0; j < num; j++)
+			if (cl[j].supply == supply)
+				uv = max(uv, cl[j].uv);
+
+		cur = regulator_get_value(supply);
+		if (cur >= uv)
+			continue;
+
+		ret = regulator_set_value(supply, uv);
+		if (ret) {
+			log_warning("CPU: cannot set %s to %d uV (%d), staying on the boot clock\n",
+				    k1_supply_name(supply), uv, ret);
+			return ret;
+		}
+		cur = regulator_get_value(supply);
+		if (cur < uv) {
+			log_warning("CPU: %s reads %d uV, not %d uV, staying on the boot clock\n",
+				    k1_supply_name(supply), cur, uv);
+			return -EIO;
+		}
+		raised = true;
+	}
+	if (raised)
+		udelay(K1_CPU_SUPPLY_SETTLE_US);
+
+	return 0;
+}
+
+/*
+ * Run the CPU clusters at the fastest operating point the device tree gives
+ * them. The BootROM leaves them on a slow PLL1 output with the core rail low
+ * (PLL3, which the faster points run from, is not even powered); those points
+ * need the rail raised first. No clock is touched unless every cluster has a
+ * clock, an operating point and a supply that reads back at least the
+ * voltage that point needs.
+ */
+static void k1_cpu_set_opp(void)
+{
+	struct k1_cluster cl[K1_NUM_CLUSTERS];
+	int num, i;
+	ulong ret;
+
+	if (k1_cpu_get_clusters(cl, &num))
+		return;
+	if (k1_cpu_raise_supplies(cl, num))
 		return;
 
-	if ((readl(apmu + APMU_CPU_C0_CLK_CTRL) & CPU_CLK_SRC_MASK) ==
-	    CPU_CLK_SRC_HI) {
-		log_info("CPU: clusters already on PLL3\n");
-		return;
+	for (i = 0; i < num; i++) {
+		ret = clk_set_rate(&cl[i].clk, cl[i].hz);
+		if (IS_ERR_VALUE(ret)) {
+			log_warning("CPU: cannot set the %s cluster clock to %lu Hz (%d)\n",
+				    cl[i].cpu->name, cl[i].hz, (int)ret);
+			continue;
+		}
+		log_info("CPU: cluster %d at %lu MHz, %s at %d uV\n", i,
+			 clk_get_rate(&cl[i].clk) / 1000000,
+			 k1_supply_name(cl[i].supply),
+			 regulator_get_value(cl[i].supply));
 	}
-
-	swcr1 = readl(apbs + APBS_PLL3_SWCR1);
-	swcr3 = readl(apbs + APBS_PLL3_SWCR3);
-	if (swcr1 != PLL3_SWCR1_3200MHZ ||
-	    (swcr3 & ~PLL3_SWCR3_PWR_ON) != PLL3_SWCR3_3200MHZ) {
-		log_warning("CPU: PLL3 not at the expected 3200 MHz setting (0x%08x/0x%08x), leaving the clock alone\n",
-			    swcr1, swcr3);
-		return;
-	}
-
-	ret = regulator_get_by_platname("vdd_core", &vdd_core);
-	if (ret) {
-		log_info("CPU: no vdd_core regulator (%d), staying on the boot clock\n",
-			 ret);
-		return;
-	}
-	ret = regulator_set_value(vdd_core, VDD_CORE_1P6GHZ_UV);
-	if (ret) {
-		log_warning("CPU: cannot set vdd_core (%d), staying on the boot clock\n",
-			    ret);
-		return;
-	}
-	ret = regulator_get_value(vdd_core);
-	if (ret != VDD_CORE_1P6GHZ_UV) {
-		log_warning("CPU: vdd_core reads %d uV, not %d, staying on the boot clock\n",
-			    ret, VDD_CORE_1P6GHZ_UV);
-		return;
-	}
-	/* rail settle: the ramp is 5 mV/us, the PMIC readback is only the selector */
-	mdelay(2);
-
-	writel(PLL3_SWCR2_D2_EN, apbs + APBS_PLL3_SWCR2);
-	writel(swcr3 | PLL3_SWCR3_PWR_ON, apbs + APBS_PLL3_SWCR3);
-	ret = readl_poll_timeout(mpmu + MPMU_POSR, val, val & POSR_PLL3_LOCK,
-				 100000);
-	if (ret) {
-		log_warning("CPU: PLL3 did not lock, staying on the boot clock\n");
-		return;
-	}
-
-	if (k1_cpu_cluster_switch(apmu + APMU_CPU_C0_CLK_CTRL) ||
-	    k1_cpu_cluster_switch(apmu + APMU_CPU_C1_CLK_CTRL)) {
-		log_warning("CPU: cluster frequency change did not complete\n");
-		return;
-	}
-
-	log_info("CPU: clusters at 1.6 GHz (PLL3/2), vdd_core %d uV\n",
-		 VDD_CORE_1P6GHZ_UV);
 }
 
 int board_init(void)
 {
-	k1_cpu_1p6ghz();
+	k1_cpu_set_opp();
 
 	return 0;
 }
