@@ -106,11 +106,6 @@ static int pcie_dw_spacemit_pcie_link_up(struct pcie_dw_spacemit *pci, u32 cap_s
 {
 	u32 reg;
 
-	if (is_link_up(pci)) {
-		printf("PCI Link already up before configuration!\n");
-		return 1;
-	}
-
 	/* DW pre link configurations */
 	pcie_dw_configure(pci, cap_speed);
 
@@ -131,6 +126,22 @@ static int pcie_dw_spacemit_pcie_link_up(struct pcie_dw_spacemit *pci, u32 cap_s
 	udelay(100);
 
 	return 1;
+}
+
+/*
+ * Reset the controller, so that nothing left over from an earlier boot
+ * stage or a warm reboot (a trained link, a stale LTSSM state) survives.
+ */
+static void spacemit_pcie_toggle_soft_reset(struct pcie_dw_spacemit *pci)
+{
+	u32 reg;
+
+	reg = spacemit_pcie_readl(pci, PCIE_CTRL_LOGIC);
+	spacemit_pcie_writel(pci, PCIE_CTRL_LOGIC, reg | PCIE_SOFT_RESET);
+	/* Read back so that the write has landed before the delay */
+	spacemit_pcie_readl(pci, PCIE_CTRL_LOGIC);
+	mdelay(2);
+	spacemit_pcie_writel(pci, PCIE_CTRL_LOGIC, reg & ~PCIE_SOFT_RESET);
 }
 
 static int pcie_set_mode(struct pcie_dw_spacemit *pci,
@@ -215,6 +226,8 @@ static int pcie_dw_spacemit_probe(struct udevice *dev)
 	ofnode port;
 	int ret;
 	u32 reg;
+
+	spacemit_pcie_toggle_soft_reset(pci);
 
 	/* enable pcie clk and deassert resets */
 	clk_enable_bulk(&pci->clks);
