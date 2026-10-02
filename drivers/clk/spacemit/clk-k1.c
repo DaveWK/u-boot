@@ -1501,22 +1501,36 @@ static struct clk *k1_ccu_apmu_clks[] = {
 };
 #endif
 
-static int clk_k1_enable(struct clk *clk)
+/*
+ * Look up the CCU clock behind a consumer's clock. The SPL registers only the
+ * few clocks it uses, so a device tree consumer (a CPU node's cluster clock,
+ * say) can name one this build does not have. There is no CCU clock to
+ * program then: the clock stays as the previous boot stage left it.
+ */
+static struct clk *clk_k1_lookup(struct clk *clk)
 {
 	const struct spacemit_ccu_data *data;
-	struct clk *c;
-	struct clk *pclk;
-	int ret, i;
+	int i;
 
 	data = (struct spacemit_ccu_data *)dev_get_driver_data(clk->dev);
-	for (i = 0; i < data->num; i++) {
-		if (clk->id == data->clks[i]->id) {
-			c = data->clks[i];
-			break;
-		}
-	}
-	if (i == data->num)
-		c = clk;
+	for (i = 0; i < data->num; i++)
+		if (clk->id == data->clks[i]->id)
+			return data->clks[i];
+
+	dev_dbg(clk->dev, "clock %lu not registered, leaving it alone\n",
+		clk->id);
+	return NULL;
+}
+
+static int clk_k1_enable(struct clk *clk)
+{
+	struct clk *c;
+	struct clk *pclk;
+	int ret;
+
+	c = clk_k1_lookup(clk);
+	if (!c)
+		return 0;
 
 	pclk = clk_get_parent(c);
 	if (!IS_ERR_OR_NULL(pclk)) {
@@ -1530,20 +1544,13 @@ static int clk_k1_enable(struct clk *clk)
 
 static int clk_k1_disable(struct clk *clk)
 {
-	const struct spacemit_ccu_data *data;
 	struct clk *c;
 	struct clk *pclk;
-	int ret, i;
+	int ret;
 
-	data = (struct spacemit_ccu_data *)dev_get_driver_data(clk->dev);
-	for (i = 0; i < data->num; i++) {
-		if (clk->id == data->clks[i]->id) {
-			c = data->clks[i];
-			break;
-		}
-	}
-	if (i == data->num)
-		c = clk;
+	c = clk_k1_lookup(clk);
+	if (!c)
+		return 0;
 
 	pclk = clk_get_parent(c);
 	if (!IS_ERR_OR_NULL(pclk)) {
