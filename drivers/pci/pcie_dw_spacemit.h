@@ -12,13 +12,6 @@
 #include <linux/bitops.h>
 
 /* PCIe DW common registers */
-#define PCIE_LINK_CAPABILITY		0x7c
-#define PCIE_LINK_CTL_2			0xa0
-#define TARGET_LINK_SPEED_MASK		0xf
-#define LINK_SPEED_GEN_1		0x1
-#define LINK_SPEED_GEN_2		0x2
-#define LINK_SPEED_GEN_3		0x3
-
 #define PCIE_MISC_CONTROL_1_OFF	0x8bc
 #define PCIE_DBI_RO_WR_EN		BIT(0)
 

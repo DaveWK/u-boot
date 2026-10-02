@@ -40,6 +40,7 @@ struct pcie_dw_spacemit {
 	struct clk_bulk		clks;
 	struct reset_ctl_bulk	rsts;
 	struct udevice		*vpcie3v3;	/* slot supply, if described */
+	u32			max_link_speed;	/* 0: hardware default */
 };
 
 static inline u32 spacemit_pcie_readl(struct pcie_dw_spacemit *pcie, u32 offset)
@@ -58,21 +59,33 @@ static inline u32 spacemit_pcie_phy_ahb_readl(struct pcie_dw_spacemit *pcie, u32
 	return readl(pcie->phy_ahb + offset);
 }
 
-static void pcie_dw_configure(struct pcie_dw_spacemit *pci, u32 cap_speed)
+static void pcie_dw_configure(struct pcie_dw_spacemit *pci)
 {
-	u32 val;
+	void __iomem *cap;
+	u32 speed = pci->max_link_speed;
+	u16 lnkctl2;
+	u32 lnkcap;
+
+	cap = pci->dw.dbi_base + pcie_dw_find_capability(&pci->dw,
+							 PCI_CAP_ID_EXP);
 
 	dw_pcie_dbi_write_enable(&pci->dw, true);
 
-	val = readl(pci->dw.dbi_base + PCIE_LINK_CAPABILITY);
-	val &= ~TARGET_LINK_SPEED_MASK;
-	val |= cap_speed;
-	writel(val, pci->dw.dbi_base + PCIE_LINK_CAPABILITY);
+	/*
+	 * Keep the hardware's supported speeds unless the device tree limits
+	 * them with "max-link-speed", as Linux's DesignWare core does.
+	 */
+	if (speed) {
+		lnkcap = readl(cap + PCI_EXP_LNKCAP);
+		lnkcap &= ~PCI_EXP_LNKCAP_SLS;
+		lnkcap |= speed;
+		writel(lnkcap, cap + PCI_EXP_LNKCAP);
 
-	val = readl(pci->dw.dbi_base + PCIE_LINK_CTL_2);
-	val &= ~TARGET_LINK_SPEED_MASK;
-	val |= cap_speed;
-	writel(val, pci->dw.dbi_base + PCIE_LINK_CTL_2);
+		lnkctl2 = readw(cap + PCI_EXP_LNKCTL2);
+		lnkctl2 &= ~PCI_EXP_LNKCTL2_TLS;
+		lnkctl2 |= speed;
+		writew(lnkctl2, cap + PCI_EXP_LNKCTL2);
+	}
 
 	dw_pcie_dbi_write_enable(&pci->dw, false);
 }
@@ -105,12 +118,12 @@ static int wait_link_up(struct pcie_dw_spacemit *pci)
 	return 1;
 }
 
-static int pcie_dw_spacemit_pcie_link_up(struct pcie_dw_spacemit *pci, u32 cap_speed)
+static int pcie_dw_spacemit_pcie_link_up(struct pcie_dw_spacemit *pci)
 {
 	u32 reg;
 
 	/* DW pre link configurations */
-	pcie_dw_configure(pci, cap_speed);
+	pcie_dw_configure(pci);
 
 	/* Initiate link training */
 	reg = spacemit_pcie_readl(pci, PCIECTRL_K1X_CONF_DEVICE_CMD);
@@ -315,7 +328,7 @@ static int pcie_dw_spacemit_probe(struct udevice *dev)
 	pcie_dw_setup_host(&pci->dw);
 	pcie_dw_init_id(pci);
 
-	if (!pcie_dw_spacemit_pcie_link_up(pci, LINK_SPEED_GEN_1)) {
+	if (!pcie_dw_spacemit_pcie_link_up(pci)) {
 		printf("PCIE-%d: Link down\n", dev_seq(dev));
 		return -ENODEV;
 	}
@@ -379,6 +392,13 @@ static int pcie_dw_spacemit_of_to_plat(struct udevice *dev)
 	if (!pcie->apmu_base)
 		return -EINVAL;
 	pcie->apmu_offset = args.args[0];
+
+	pcie->max_link_speed = dev_read_u32_default(dev, "max-link-speed", 0);
+	if (pcie->max_link_speed > LINK_SPEED_GEN_4) {
+		dev_warn(dev, "invalid max-link-speed %u, ignored\n",
+			 pcie->max_link_speed);
+		pcie->max_link_speed = 0;
+	}
 
 	/* Derive port ID from DBI base address */
 	pcie->port_id = (dbi_addr - SPACEMIT_PCIE_DBI_BASE) / SPACEMIT_PCIE_DBI_STRIDE;
