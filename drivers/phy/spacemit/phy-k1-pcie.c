@@ -231,10 +231,15 @@ static int k1_pcie_phy_init(struct phy *phy)
 
 	lane = (k1_phy->pcie_lanes == 1) ? 1 : 2;
 
-	/* Apply rterm calibration value: LSB to RX_REG1 */
+	/*
+	 * Apply rterm calibration value: LSB to RX_REG1, and enable
+	 * refclock receiver termination
+	 */
 	for (i = 0; i < lane; i++) {
 		val = readl(regs + PCIE_RX_REG1 + PHY_LANE_OFFSET * i);
+		val &= ~AFE_RTERM_REG;
 		val |= FIELD_PREP(AFE_RTERM_REG, k1_phy_rterm_rx());
+		val |= EN_RTERM;
 		writel(val, regs + PCIE_RX_REG1 + PHY_LANE_OFFSET * i);
 	}
 
@@ -248,6 +253,7 @@ static int k1_pcie_phy_init(struct phy *phy)
 	/* Apply rterm MSB to TX_REG1 */
 	for (i = 0; i < lane; i++) {
 		val = readl(regs + PCIE_TX_REG1 + PHY_LANE_OFFSET * i);
+		val &= ~TX_RTERM_REG;
 		val |= FIELD_PREP(TX_RTERM_REG, k1_phy_rterm_tx());
 		writel(val, regs + PCIE_TX_REG1 + PHY_LANE_OFFSET * i);
 	}
