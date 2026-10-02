@@ -11,6 +11,7 @@
 #include <cpu_func.h>
 #include <configs/k1.h>
 #include <dm/device.h>
+#include <dm/ofnode.h>
 #include <dm/uclass.h>
 #include <i2c.h>
 #include <linux/bitfield.h>
@@ -326,6 +327,33 @@ static void ddr_cfg_init(struct ddr_cfg *cfg)
 	strcpy(cfg->type, DDR_DEFAULT_TYPE);
 }
 
+/*
+ * Boards whose EEPROM carries no DDR TLVs (the OrangePi RV2 and R2S hold
+ * only a MAC address there) describe their DRAM in the device tree instead:
+ * a "spacemit,k1-ddr" node with "cs-num", "datarate", "type" and
+ * optionally "tx-odt". Values found there replace the built-in defaults;
+ * the EEPROM, when it has them, still has the last word.
+ */
+static void ddr_cfg_from_dt(struct ddr_cfg *cfg)
+{
+	ofnode node;
+	const char *type;
+	u32 val;
+
+	node = ofnode_by_compatible(ofnode_null(), "spacemit,k1-ddr");
+	if (!ofnode_valid(node))
+		return;
+	if (!ofnode_read_u32(node, "cs-num", &val))
+		cfg->cs_num = val;
+	if (!ofnode_read_u32(node, "datarate", &val))
+		cfg->data_rate = val;
+	if (!ofnode_read_u32(node, "tx-odt", &val))
+		cfg->tx_odt = val;
+	type = ofnode_read_string(node, "type");
+	if (type)
+		strlcpy((char *)cfg->type, type, sizeof(cfg->type));
+}
+
 int read_ddr_info(struct ddr_cfg *cfg)
 {
 	u8 eeprom_data[TLV_TOTAL_LEN_MAX], *p;
@@ -338,6 +366,7 @@ int read_ddr_info(struct ddr_cfg *cfg)
 	if (!cfg)
 		return -EINVAL;
 	ddr_cfg_init(cfg);
+	ddr_cfg_from_dt(cfg);
 	ret = read_tlvinfo_tlv_eeprom(eeprom_data, &tlv_hdr,
 				      &tlv_entry, i);
 	if (ret)
