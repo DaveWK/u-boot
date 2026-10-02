@@ -13,12 +13,6 @@
 #include <power/regulator.h>
 #include <soc/spacemit/k1-syscon.h>
 
-/* APMU EMAC0/1 clock, reset and interface control (k1-syscon.h offsets) */
-#define EMAC_AXI_SINGLE_ID		BIT(13)	/* one AXI ID for the MAC's master */
-#define EMAC_RGMII_TX_CLK_FROM_SOC	BIT(8)	/* RGMII: 0 = TX clk from RX clk */
-#define EMAC_RMII_REF_CLK_FROM_SOC	BIT(3)	/* RMII only */
-#define EMAC_PHY_SEL_RGMII		BIT(2)	/* 0 = RMII, 1 = RGMII */
-
 /* PLL3 as the ROM leaves it: programmed for 3200 MHz, not powered */
 #define PLL3_SWCR1_3200MHZ		0x0050dd67
 #define PLL3_SWCR3_3200MHZ		0x43eaaaab
@@ -44,58 +38,6 @@ static void __iomem *k1_syscon_base(const char *compat)
 	if (addr == FDT_ADDR_T_NONE)
 		return NULL;
 	return (void __iomem *)addr;
-}
-
-/*
- * Leave every enabled EMAC's APMU control word in the state its PHY mode
- * needs.  Only the clock gate and reset bits of this word are under a
- * driver's control through the clock and reset frameworks; the interface
- * select and clock-source bits are not, and their reset default is RMII.
- * An OS whose MAC driver expects the bootloader to have chosen the
- * interface (FreeBSD's smte did until it was taught otherwise) then finds
- * the PHY unclocked and unreachable on MDIO.
- *
- * For RGMII the TX clock comes from the PHY's RX clock (bit 8 clear): with
- * "TX clock from the SoC" the MAC's transmit side and its statistics block
- * have no running clock on the OrangePi R2S, the TX ring stalls after ten
- * frames and nothing reaches the wire.  Bit 3 is the RMII equivalent and
- * is cleared with it.  The single AXI ID is what both the vendor and the
- * FreeBSD driver run with.
- */
-static void k1_emac_handoff(void)
-{
-	ofnode node;
-
-	ofnode_for_each_compatible_node(node, "spacemit,k1-emac") {
-		struct ofnode_phandle_args args;
-		const char *mode;
-		void __iomem *reg;
-		u32 val;
-
-		if (!ofnode_is_enabled(node))
-			continue;
-		mode = ofnode_read_string(node, "phy-mode");
-		if (!mode)
-			continue;
-		if (ofnode_parse_phandle_with_args(node, "spacemit,apmu", NULL,
-						   1, 0, &args))
-			continue;
-		reg = (void __iomem *)ofnode_get_addr(args.node);
-		if (reg == (void __iomem *)FDT_ADDR_T_NONE)
-			continue;
-		reg += args.args[0];
-
-		val = readl(reg);
-		val |= EMAC_AXI_SINGLE_ID;
-		val &= ~(EMAC_RGMII_TX_CLK_FROM_SOC | EMAC_RMII_REF_CLK_FROM_SOC);
-		if (!strncmp(mode, "rgmii", 5))
-			val |= EMAC_PHY_SEL_RGMII;
-		else
-			val &= ~EMAC_PHY_SEL_RGMII;
-		writel(val, reg);
-		log_debug("%s: %s, apmu+0x%x = 0x%08x\n", ofnode_get_name(node),
-			  mode, args.args[0], readl(reg));
-	}
 }
 
 static int k1_cpu_cluster_switch(void __iomem *ctrl)
@@ -196,7 +138,6 @@ static void k1_cpu_1p6ghz(void)
 
 int board_init(void)
 {
-	k1_emac_handoff();
 	k1_cpu_1p6ghz();
 
 	return 0;
