@@ -92,7 +92,6 @@
 #define PCIE_CLK_RES_CTRL		0x03cc
 #define PCIE_APP_HOLD_PHY_RST		BIT(30)
 #define DEVICE_TYPE_RC			BIT(31)
-#define GLOBAL_PHY_RST			BIT(8)
 
 #define APMU_CLK_GATE_MASK		0x3f
 
@@ -107,8 +106,8 @@ struct k1_pcie_phy {
 	void __iomem *apmu_base;	/* only for combo PHY */
 	u32 pcie_lanes;
 	bool is_combo;
-	struct clk_bulk clks;
-	struct reset_ctl_bulk rst;
+	struct clk refclk;
+	struct reset_ctl phy_rst;
 };
 
 static bool k1_phy_rterm_valid(void)
@@ -155,13 +154,11 @@ int k1_pcie_combo_phy_calibrate(struct udevice *dev, struct k1_pcie_phy *k1_phy)
 
 	/*
 	 * Initialize the APMU control register: set RC mode, enable
-	 * clock gates (bits 0-5), deassert PHY global reset, then
-	 * release the PHY hold.  Without this the PHY registers are
-	 * not accessible and reads will hang.
+	 * clock gates (bits 0-5), then release the PHY hold.  The PHY
+	 * (global) reset was deasserted at probe.
 	 */
 	val = readl(k1_phy->apmu_base + PCIE_CLK_RES_CTRL);
 	val |= DEVICE_TYPE_RC | PCIE_APP_HOLD_PHY_RST | APMU_CLK_GATE_MASK;
-	val &= ~GLOBAL_PHY_RST;
 	writel(val, k1_phy->apmu_base + PCIE_CLK_RES_CTRL);
 	val &= ~PCIE_APP_HOLD_PHY_RST;
 	writel(val, k1_phy->apmu_base + PCIE_CLK_RES_CTRL);
@@ -384,6 +381,48 @@ static const struct phy_ops k1_pcie_phy_ops = {
 	.exit		= k1_pcie_phy_exit,
 };
 
+/*
+ * Enable the 24 MHz reference clock that feeds the PHY PLL, and
+ * deassert the PHY (global) reset, leaving it deasserted.  This must
+ * happen before any PHY register is accessed.
+ */
+static int k1_pcie_phy_enable_resources(struct udevice *dev,
+					struct k1_pcie_phy *k1_phy)
+{
+	int ret;
+
+	ret = clk_get_by_name(dev, "refclk", &k1_phy->refclk);
+	if (ret) {
+		dev_err(dev, "failed to get refclk: %d\n", ret);
+		return ret;
+	}
+
+	ret = clk_enable(&k1_phy->refclk);
+	if (ret) {
+		dev_err(dev, "failed to enable refclk: %d\n", ret);
+		return ret;
+	}
+
+	ret = reset_get_by_name(dev, "phy", &k1_phy->phy_rst);
+	if (ret) {
+		dev_err(dev, "failed to get phy reset: %d\n", ret);
+		goto err_clk;
+	}
+
+	ret = reset_deassert(&k1_phy->phy_rst);
+	if (ret) {
+		dev_err(dev, "failed to deassert phy reset: %d\n", ret);
+		goto err_clk;
+	}
+
+	return 0;
+
+err_clk:
+	clk_disable(&k1_phy->refclk);
+
+	return ret;
+}
+
 static int k1_pcie_phy_probe(struct udevice *dev)
 {
 	struct k1_pcie_phy *k1_phy = dev_get_priv(dev);
@@ -425,13 +464,9 @@ static int k1_pcie_phy_probe(struct udevice *dev)
 		if (!k1_phy->apmu_base)
 			return -EINVAL;
 
-		ret = clk_get_bulk(dev, &k1_phy->clks);
+		ret = k1_pcie_phy_enable_resources(dev, k1_phy);
 		if (ret)
-			dev_warn(dev, "failed to get clocks: %d\n", ret);
-
-		ret = reset_get_bulk(dev, &k1_phy->rst);
-		if (ret)
-			dev_warn(dev, "failed to get resets: %d\n", ret);
+			return ret;
 
 		ret = k1_pcie_combo_phy_calibrate(dev, k1_phy);
 		if (ret)
@@ -461,13 +496,9 @@ static int k1_pcie_phy_probe(struct udevice *dev)
 			return -ENOENT;
 		}
 
-		ret = clk_get_bulk(dev, &k1_phy->clks);
+		ret = k1_pcie_phy_enable_resources(dev, k1_phy);
 		if (ret)
-			dev_warn(dev, "failed to get clocks: %d\n", ret);
-
-		ret = reset_get_bulk(dev, &k1_phy->rst);
-		if (ret)
-			dev_warn(dev, "failed to get resets: %d\n", ret);
+			return ret;
 	}
 
 	dev_dbg(dev, "probed (combo=%d lanes=%u rterm=0x%02x)\n",
