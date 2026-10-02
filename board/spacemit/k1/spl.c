@@ -150,6 +150,8 @@ static const struct {
 	{ "k1-x_MUSE-Pi-Pro",   "spacemit/k1-musepi-pro"    },
 	{ "k1-x_deb1",          "spacemit/k1-bananapi-f3"   },
 	{ "k1-x_milkv-jupiter", "spacemit/k1-milkv-jupiter" },
+	{ "x1_orangepi-r2s",    "spacemit/k1-orangepi-r2s"  },
+	{ "x1_orangepi-rv2",    "spacemit/k1-orangepi-rv2"  },
 };
 
 int read_product_name(char *name, int size)

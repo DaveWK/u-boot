@@ -173,6 +173,27 @@
 };
 
 /*
+ * The TLV EEPROM (an AT24C02 at 0x50 on i2c2, as on upstream's other K1
+ * boards). The SPL reads the product name and the DDR rank count from it;
+ * U-Boot proper reads the MAC addresses (CONFIG_ID_EEPROM).
+ */
+&i2c2 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&i2c2_0_cfg>;
+	status = "okay";
+	bootph-pre-ram;
+
+	eeprom@50 {
+		compatible = "atmel,24c02";
+		reg = <0x50>;
+		pagesize = <16>;
+		read-only;
+		size = <256>;
+		bootph-pre-ram;
+	};
+};
+
+/*
  * Without the in-tree LPDDR4X driver (CONFIG_SPACEMIT_K1_DDR), the SPL runs
  * SpacemiT's DDR training firmware, which binman appends to it as upstream's
  * K1 boards do. DDR_FW_FILE names the firmware; without it the section holds
