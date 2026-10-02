@@ -230,8 +230,18 @@ static int pcie_dw_spacemit_probe(struct udevice *dev)
 	spacemit_pcie_toggle_soft_reset(pci);
 
 	/* enable pcie clk and deassert resets */
-	clk_enable_bulk(&pci->clks);
-	reset_deassert_bulk(&pci->rsts);
+	ret = clk_enable_bulk(&pci->clks);
+	if (ret) {
+		dev_err(dev, "failed to enable clocks: %d\n", ret);
+		return ret;
+	}
+
+	ret = reset_deassert_bulk(&pci->rsts);
+	if (ret) {
+		dev_err(dev, "failed to deassert resets: %d\n", ret);
+		clk_disable_bulk(&pci->clks);
+		return ret;
+	}
 
 	reg = spacemit_pcie_readl(pci, PCIECTRL_K1X_CONF_DEVICE_CMD);
 	reg &= ~LTSSM_EN;
@@ -317,6 +327,8 @@ static int pcie_dw_spacemit_probe(struct udevice *dev)
 					       pci->dw.mem.phys_start,
 					       pci->dw.mem.bus_start,
 					       pci->dw.mem.size);
+	if (ret)
+		return -EIO;
 
 	return 0;
 }
