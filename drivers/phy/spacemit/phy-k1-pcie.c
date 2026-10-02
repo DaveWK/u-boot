@@ -166,40 +166,6 @@ int k1_pcie_combo_phy_calibrate(struct udevice *dev, struct k1_pcie_phy *k1_phy)
 	/* Put the combo PHY into PCIe mode for calibration */
 	k1_combo_phy_sel(k1_phy, false);
 
-	/* Set refclk override + clear CFG_REFCLK_MODE */
-	val = readl(regs + PCIE_LTSSM_DIS_ENTRY);
-	val |= OVRD_REFCLK_MODE;
-	writel(val, regs + PCIE_LTSSM_DIS_ENTRY);
-
-	val = readl(regs + PCIE_LTSSM_DIS_ENTRY);
-	val &= ~CFG_REFCLK_MODE;
-	writel(val, regs + PCIE_LTSSM_DIS_ENTRY);
-
-	val = readl(regs + PCIE_LTSSM_DIS_ENTRY);
-	val |= FIELD_PREP(CFG_REFCLK_MODE, RFCLK_MODE_DRIVER);
-	writel(val, regs + PCIE_LTSSM_DIS_ENTRY);
-
-	/* Configure PLL: select 24MHz reference, enable 100MHz output */
-	val = readl(regs + PCIE_PU_PLL_1);
-	val &= ~(FREF_SEL | REF_100_WSSC);
-	writel(val, regs + PCIE_PU_PLL_1);
-
-	val = readl(regs + PCIE_PU_PLL_1);
-	val |= FIELD_PREP(FREF_SEL, FREF_24M);
-	writel(val, regs + PCIE_PU_PLL_1);
-
-	val = readl(regs + PCIE_PU_PLL_2);
-	val |= GEN_REF100;
-	writel(val, regs + PCIE_PU_PLL_2);
-
-	val = readl(regs + PCIE_PU_PLL_1);
-	val &= ~SSC_DEP_SEL;
-	writel(val, regs + PCIE_PU_PLL_1);
-
-	/* Start PHY init + force receiver */
-	writel(0x00000B78, regs + PCIE_PU_ADDR_CLK_CFG);
-	writel(CFG_FORCE_RCV_RETRY, regs + PCIE_RC_DONE_STATUS);
-
 	/* Wait for calibration to complete */
 	ret = readl_poll_sleep_timeout(regs + PCIE_RCAL_RESULT,
 				       val, val & R_TUNE_DONE,
