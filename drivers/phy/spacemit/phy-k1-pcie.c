@@ -265,10 +265,13 @@ static int k1_pcie_phy_init(struct phy *phy)
 		writel(val, regs + PCIE_TX_REG1 + PHY_LANE_OFFSET * i);
 	}
 
-	/* Set CLKSEL_24M on lane0 */
-	val = readl(regs + PCIE_RC_CAL_REG2);
-	val |= FIELD_PREP(CLKSEL, CLKSEL_24M);
-	writel(val, regs + PCIE_RC_CAL_REG2);
+	/* Select the 24 MHz input clock for all lanes */
+	for (i = 0; i < lane; i++) {
+		val = readl(regs + PCIE_RC_CAL_REG2 + PHY_LANE_OFFSET * i);
+		val &= ~CLKSEL;
+		val |= FIELD_PREP(CLKSEL, CLKSEL_24M);
+		writel(val, regs + PCIE_RC_CAL_REG2 + PHY_LANE_OFFSET * i);
+	}
 
 	/* Toggle RC_CAL_TOGGLE for all lanes */
 	for (i = 0; i < lane; i++) {
