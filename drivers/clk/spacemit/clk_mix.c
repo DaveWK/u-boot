@@ -14,6 +14,7 @@
 #include <div64.h>
 #include <regmap.h>
 #include <linux/clk-provider.h>
+#include <linux/err.h>
 #include <linux/kernel.h>
 
 #include "clk_mix.h"
@@ -231,6 +232,65 @@ static int ccu_mux_set_parent(struct clk *clk, struct clk *parent)
 	return ccu_mix_trigger_fc(clk);
 }
 
+/*
+ * A mux without a divider can only run at one of its parents' rates. Pick the
+ * fastest parent that does not exceed the requested rate, as the generic
+ * clk_mux does unless told to round to the closest: a consumer that prepared
+ * for a rate, as a CPU cluster does by raising its supply to the operating
+ * point first, must not end up faster than it asked for. The new parent is
+ * enabled before the switch, which for the CPU clusters powers up and locks
+ * PLL3; after a failed switch it stays enabled, as the mux may already have
+ * moved onto it.
+ */
+static ulong ccu_mux_set_rate(struct clk *clk, ulong rate)
+{
+	struct ccu_common *common = clk_to_ccu_common(clk);
+	struct clk *best = NULL;
+	ulong best_rate = 0;
+	int i, ret;
+
+	for (i = 0; i < common->num_parents; i++) {
+		struct udevice *parent_dev;
+		struct clk *parent;
+		ulong parent_rate;
+
+		if (uclass_get_device_by_name(UCLASS_CLK, common->parents[i],
+					      &parent_dev))
+			continue;
+		parent = dev_get_clk_ptr(parent_dev);
+		if (!parent)
+			continue;
+
+		parent_rate = clk_get_rate(parent);
+		if (IS_ERR_VALUE(parent_rate) || parent_rate > rate ||
+		    parent_rate <= best_rate)
+			continue;
+
+		best = parent;
+		best_rate = parent_rate;
+	}
+
+	if (!best)
+		return -EINVAL;
+
+	if (clk->dev->parent == best->dev)
+		return best_rate;
+
+	ret = clk_enable(best);
+	if (ret)
+		return ret;
+
+	ret = ccu_mux_set_parent(clk, best);
+	if (ret)
+		return ret;
+
+	ret = device_reparent(clk->dev, best->dev);
+	if (ret)
+		return ret;
+
+	return best_rate;
+}
+
 int spacemit_gate_init(struct ccu_common *common)
 {
 	struct clk *clk = &common->clk;
@@ -287,6 +347,7 @@ int spacemit_mux_init(struct ccu_common *common)
 static const struct clk_ops spacemit_clk_mux_ops = {
 	.set_parent	= ccu_mux_set_parent,
 	.get_rate	= clk_generic_get_rate,
+	.set_rate	= ccu_mux_set_rate,
 };
 
 U_BOOT_DRIVER(spacemit_clk_mux) = {
