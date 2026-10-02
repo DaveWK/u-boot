@@ -105,6 +105,7 @@ obj-$(CONFIG_SJA1105) += sja1105.o
 obj-$(CONFIG_SMC911X) += smc911x.o
 obj-$(CONFIG_SNI_AVE) += sni_ave.o
 obj-$(CONFIG_SNI_NETSEC) += sni_netsec.o
+obj-$(CONFIG_SPACEMIT_K1_EMAC) += spacemit/
 obj-$(CONFIG_SUN4I_EMAC) += sunxi_emac.o
 obj-$(CONFIG_SUN8I_EMAC) += sun8i_emac.o
 obj-$(CONFIG_TSEC_ENET) += tsec.o fsl_mdio.o

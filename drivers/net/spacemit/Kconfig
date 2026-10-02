@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: GPL-2.0+
+
+config SPACEMIT_K1_EMAC
+	bool "SpacemiT K1 Ethernet MAC support"
+	depends on TARGET_SPACEMIT_K1
+	select DM_DMA
+	select DM_ETH_PHY
+	select DM_MDIO
+	select PHYLIB
+	select PHY_GIGE
+	help
+	  Enable support for the Ethernet MAC integrated in the SpacemiT K1.
+	  The controller supports 10/100/1000 Mbps links through RGMII and
+	  10/100 Mbps links through RMII. Its internal MDIO controller is
+	  exposed through the driver-model MDIO uclass.
