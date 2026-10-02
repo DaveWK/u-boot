@@ -640,10 +640,14 @@ static int spacemit_sdhci_probe(struct udevice *dev)
 	spacemit_sdhci_phy_init(dev, host);
 	return 0;
 
+	/*
+	 * Leave the clocks and resets alone on failure. The "core" clock and
+	 * the "axi" reset are the AXI clock and reset that every SDHCI
+	 * controller of the K1 shares: releasing them would gate the bus of
+	 * the other controllers, and the next access to one of them hangs.
+	 */
 err_reset:
-	reset_release_bulk(&plat->resets);
 err_clk:
-	clk_release_bulk(&plat->clks);
 	return ret;
 }
 
