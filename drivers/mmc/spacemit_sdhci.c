@@ -606,10 +606,28 @@ static int spacemit_sdhci_probe(struct udevice *dev)
 		goto err_reset;
 	}
 
-	ret = clk_set_rate(&clk, plat->cfg.f_max);
-	if (ret) {
-		log_err("Failed to set io clk: %d\n", ret);
-		goto err_reset;
+	/*
+	 * Without max-frequency there is no rate to ask for: leave the io
+	 * clock as an earlier stage set it and run from its current rate. The
+	 * capabilities register gives no base clock on the K1, so it cannot
+	 * stand in. clk_set_rate() returns the new rate on success, so only a
+	 * negative value is an error.
+	 */
+	if (plat->cfg.f_max) {
+		long rate = clk_set_rate(&clk, plat->cfg.f_max);
+
+		if (rate < 0) {
+			ret = rate;
+			log_err("Failed to set io clk: %d\n", ret);
+			goto err_reset;
+		}
+	} else {
+		plat->cfg.f_max = clk_get_rate(&clk);
+		if (IS_ERR_VALUE(plat->cfg.f_max) || !plat->cfg.f_max) {
+			ret = -EINVAL;
+			log_err("No max-frequency and no io clk rate\n");
+			goto err_reset;
+		}
 	}
 
 	/* Set quirks */
