@@ -72,6 +72,12 @@ static void pcie_dw_configure(struct pcie_dw_spacemit *pci)
 	dw_pcie_dbi_write_enable(&pci->dw, true);
 
 	/*
+	 * Do not advertise ASPM L1: as Linux's driver notes, some NVMe drives
+	 * report errors with it.
+	 */
+	clrbits_le32(cap + PCI_EXP_LNKCAP, PCI_EXP_LNKCAP_ASPM_L1);
+
+	/*
 	 * Keep the hardware's supported speeds unless the device tree limits
 	 * them with "max-link-speed", as Linux's DesignWare core does.
 	 */
