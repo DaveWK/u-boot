@@ -311,9 +311,9 @@ static int k1_pcie_phy_init(struct phy *phy)
 	val |= FIELD_PREP(CFG_REFCLK_MODE, RFCLK_MODE_DRIVER);
 	writel(val, regs + PHY_LANE_OFFSET + PCIE_LTSSM_DIS_ENTRY);
 
-	/* Configure PLL: select 24MHz reference */
+	/* Configure PLL: select 24MHz reference, no 100MHz SSC input */
 	val = readl(regs + PCIE_PU_PLL_1);
-	val &= ~FREF_SEL;
+	val &= ~(FREF_SEL | REF_100_WSSC);
 	writel(val, regs + PCIE_PU_PLL_1);
 
 	val = readl(regs + PCIE_PU_PLL_1);
@@ -330,14 +330,25 @@ static int k1_pcie_phy_init(struct phy *phy)
 	val &= ~SSC_DEP_SEL;
 	writel(val, regs + PCIE_PU_PLL_1);
 
-	/* Set PU_ADDR_CLK_CFG for both lanes */
-	val = 0x00000B78;
-	writel(val, regs + PCIE_PU_ADDR_CLK_CFG);
-	writel(val, regs + PHY_LANE_OFFSET + PCIE_PU_ADDR_CLK_CFG);
+	/* Set the PCIe internal timer adjustment for all lanes */
+	for (i = 0; i < lane; i++) {
+		val = readl(regs + PCIE_PU_ADDR_CLK_CFG + PHY_LANE_OFFSET * i);
+		val &= ~CFG_INTERNAL_TIMER_ADJ;
+		val |= FIELD_PREP(CFG_INTERNAL_TIMER_ADJ, TIMER_ADJ_PCIE);
+		writel(val, regs + PCIE_PU_ADDR_CLK_CFG + PHY_LANE_OFFSET * i);
+	}
 
-	/* Force receiver done */
-	val = CFG_FORCE_RCV_RETRY;
+	/* Force receiver retry */
+	val = readl(regs + PCIE_RC_DONE_STATUS);
+	val |= CFG_FORCE_RCV_RETRY;
 	writel(val, regs + PCIE_RC_DONE_STATUS);
+
+	/* PLL configuration is done; start the PLL on all lanes */
+	for (i = 0; i < lane; i++) {
+		val = readl(regs + PCIE_PU_ADDR_CLK_CFG + PHY_LANE_OFFSET * i);
+		val |= CFG_SW_PHY_INIT_DONE;
+		writel(val, regs + PCIE_PU_ADDR_CLK_CFG + PHY_LANE_OFFSET * i);
+	}
 
 	/* Wait for PLL lock */
 	ret = readl_poll_timeout(regs + PCIE_PU_ADDR_CLK_CFG, val,
