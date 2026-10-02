@@ -245,11 +245,13 @@ static int pcie_dw_spacemit_probe(struct udevice *dev)
 
 	ret = generic_phy_get_by_index_nodev(port, 0, &phy0);
 	if (!ret) {
+		/*
+		 * Hold the PHY interface in reset through PHY init; it is
+		 * released together with LTSSM_EN when link training starts.
+		 */
 		reg = spacemit_pcie_readl(pci, PCIECTRL_K1X_CONF_DEVICE_CMD);
 		reg |= DEVICE_TYPE_RC | APP_HOLD_PHY_RST | PCIE_PHY_LANE_CTRL_MASK;
 		reg &= ~GLOBAL_PHY_RST;
-		spacemit_pcie_writel(pci, PCIECTRL_K1X_CONF_DEVICE_CMD, reg);
-		reg &= ~(u32)APP_HOLD_PHY_RST;
 		spacemit_pcie_writel(pci, PCIECTRL_K1X_CONF_DEVICE_CMD, reg);
 
 		ret = generic_phy_init(&phy0);
