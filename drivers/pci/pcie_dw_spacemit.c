@@ -41,6 +41,7 @@ struct pcie_dw_spacemit {
 	struct reset_ctl_bulk	rsts;
 	struct udevice		*vpcie3v3;	/* slot supply, if described */
 	u32			max_link_speed;	/* 0: hardware default */
+	u32			num_lanes;	/* 0: hardware default */
 };
 
 static inline u32 spacemit_pcie_readl(struct pcie_dw_spacemit *pcie, u32 offset)
@@ -92,6 +93,9 @@ static void pcie_dw_configure(struct pcie_dw_spacemit *pci)
 		lnkctl2 |= speed;
 		writew(lnkctl2, cap + PCI_EXP_LNKCTL2);
 	}
+
+	/* Link width from "num-lanes"; without it, keep the hardware's */
+	dw_pcie_link_set_max_link_width(&pci->dw, pci->num_lanes);
 
 	dw_pcie_dbi_write_enable(&pci->dw, false);
 }
@@ -405,6 +409,8 @@ static int pcie_dw_spacemit_of_to_plat(struct udevice *dev)
 			 pcie->max_link_speed);
 		pcie->max_link_speed = 0;
 	}
+
+	pcie->num_lanes = dev_read_u32_default(dev, "num-lanes", 0);
 
 	/* Derive port ID from DBI base address */
 	pcie->port_id = (dbi_addr - SPACEMIT_PCIE_DBI_BASE) / SPACEMIT_PCIE_DBI_STRIDE;
