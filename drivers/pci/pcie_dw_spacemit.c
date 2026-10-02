@@ -338,15 +338,18 @@ static int pcie_dw_spacemit_probe(struct udevice *dev)
 	pcie_dw_setup_host(&pci->dw);
 	pcie_dw_init_id(pci);
 
-	if (!pcie_dw_spacemit_pcie_link_up(pci)) {
+	/*
+	 * An empty slot, or a device that does not train, is not an error:
+	 * the root port is still usable and the config accessors keep
+	 * requests for the buses behind it off the wire.
+	 */
+	if (!pcie_dw_spacemit_pcie_link_up(pci))
 		printf("PCIE-%d: Link down\n", dev_seq(dev));
-		return -ENODEV;
-	}
-
-	printf("PCIE-%d: Link up (Gen%d-x%d, Bus%d)\n", dev_seq(dev),
-	       pcie_dw_get_link_speed(&pci->dw),
-	       pcie_dw_get_link_width(&pci->dw),
-	       hose->first_busno);
+	else
+		printf("PCIE-%d: Link up (Gen%d-x%d, Bus%d)\n", dev_seq(dev),
+		       pcie_dw_get_link_speed(&pci->dw),
+		       pcie_dw_get_link_width(&pci->dw),
+		       hose->first_busno);
 
 	ret = pcie_dw_prog_outbound_atu_unroll(&pci->dw, PCIE_ATU_REGION_INDEX0,
 					       PCIE_ATU_TYPE_MEM,
@@ -430,9 +433,39 @@ static int pcie_dw_spacemit_of_to_plat(struct udevice *dev)
 	return 0;
 }
 
+/*
+ * Nothing answers behind the root port while the link is down, so do not
+ * send config requests there; Linux's DesignWare core does the same.
+ */
+static int pcie_dw_spacemit_read_config(const struct udevice *bus,
+					pci_dev_t bdf, uint offset,
+					ulong *valuep, enum pci_size_t size)
+{
+	struct pcie_dw_spacemit *pci = dev_get_priv(bus);
+
+	if (PCI_BUS(bdf) != pci->dw.first_busno && !is_link_up(pci)) {
+		*valuep = pci_get_ff(size);
+		return 0;
+	}
+
+	return pcie_dw_read_config(bus, bdf, offset, valuep, size);
+}
+
+static int pcie_dw_spacemit_write_config(struct udevice *bus, pci_dev_t bdf,
+					 uint offset, ulong value,
+					 enum pci_size_t size)
+{
+	struct pcie_dw_spacemit *pci = dev_get_priv(bus);
+
+	if (PCI_BUS(bdf) != pci->dw.first_busno && !is_link_up(pci))
+		return 0;
+
+	return pcie_dw_write_config(bus, bdf, offset, value, size);
+}
+
 static const struct dm_pci_ops pcie_dw_spacemit_ops = {
-	.read_config	= pcie_dw_read_config,
-	.write_config	= pcie_dw_write_config,
+	.read_config	= pcie_dw_spacemit_read_config,
+	.write_config	= pcie_dw_spacemit_write_config,
 };
 
 static const struct udevice_id pcie_dw_spacemit_ids[] = {
