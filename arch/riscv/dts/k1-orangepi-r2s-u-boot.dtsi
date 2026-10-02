@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later OR MIT
 
 #include "binman.dtsi"
+#include "k1-opp-u-boot.dtsi"
 
 /*
  * U-Boot-only additions for the OrangePi R2S. The hardware description itself
@@ -119,20 +120,60 @@
 
 /*
  * The SpacemiT P1 PMIC on the power-management I2C bus is described upstream.
- * board_init() raises buck1, the core rail, to the 1.6 GHz operating point
- * before switching the CPU clusters onto PLL3, and looks it up by the name
- * "vdd_core". OpenSBI's "spacemit-p1-reset" system-reset device binds to the
- * same node; without it OpenSBI does not advertise SBI_EXT_SRST and every OS
- * that reboots through SBI halts instead of resetting.
+ * OpenSBI's "spacemit-p1-reset" system-reset device binds to that node;
+ * without it OpenSBI does not advertise SBI_EXT_SRST and every OS that
+ * reboots through SBI halts instead of resetting.
+ *
+ * The cores run from its buck1. Linux caps buck1 and buck2, the CPU core
+ * rails, at the 1.05 V of the fastest operating point (merged after v7.2),
+ * and gives every CPU node buck1 as its cpu-supply (posted after v7.2).
+ * board_init() raises the rail through cpu-supply before it moves the
+ * clusters to their fastest operating point.
  */
 &i2c8 {
 	pmic@41 {
 		regulators {
-			buck1 {
-				regulator-name = "vdd_core";
+			buck1_0v9: buck1 {
+				regulator-max-microvolt = <1050000>;
+			};
+
+			buck2 {
+				regulator-max-microvolt = <1050000>;
 			};
 		};
 	};
+};
+
+&cpu_0 {
+	cpu-supply = <&buck1_0v9>;
+};
+
+&cpu_1 {
+	cpu-supply = <&buck1_0v9>;
+};
+
+&cpu_2 {
+	cpu-supply = <&buck1_0v9>;
+};
+
+&cpu_3 {
+	cpu-supply = <&buck1_0v9>;
+};
+
+&cpu_4 {
+	cpu-supply = <&buck1_0v9>;
+};
+
+&cpu_5 {
+	cpu-supply = <&buck1_0v9>;
+};
+
+&cpu_6 {
+	cpu-supply = <&buck1_0v9>;
+};
+
+&cpu_7 {
+	cpu-supply = <&buck1_0v9>;
 };
 
 /*
