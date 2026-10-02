@@ -22,11 +22,6 @@
 #define PCIE_MISC_CONTROL_1_OFF	0x8bc
 #define PCIE_DBI_RO_WR_EN		BIT(0)
 
-#define PLR_OFFSET			0x700
-#define PCIE_PORT_DEBUG0		(PLR_OFFSET + 0x28)
-#define PORT_LOGIC_LTSSM_STATE_MASK	0x1f
-#define PORT_LOGIC_LTSSM_STATE_L0	0x11
-
 #define PCIE_LINK_UP_TIMEOUT_MS		1000
 
 /* Vendor and device IDs */

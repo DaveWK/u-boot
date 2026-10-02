@@ -81,10 +81,13 @@ static int is_link_up(struct pcie_dw_spacemit *pci)
 {
 	u32 val;
 
-	val = readl(pci->dw.dbi_base + PCIE_PORT_DEBUG0);
-	val &= PORT_LOGIC_LTSSM_STATE_MASK;
+	/*
+	 * As in Linux, the link is up once both the physical layer (SMLH)
+	 * and the data link layer (RDLH) report it.
+	 */
+	val = spacemit_pcie_phy_ahb_readl(pci, K1X_PHY_AHB_LINK_STS);
 
-	return (val == PORT_LOGIC_LTSSM_STATE_L0);
+	return (val & SMLH_LINK_UP) && (val & RDLH_LINK_UP);
 }
 
 static int wait_link_up(struct pcie_dw_spacemit *pci)
