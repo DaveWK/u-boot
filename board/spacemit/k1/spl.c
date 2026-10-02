@@ -493,7 +493,20 @@ void board_init_f(ulong dummy)
 	fixup_product_name();
 	pmic_init();
 
-	ddr_early_init();
+	if (IS_ENABLED(CONFIG_SPACEMIT_K1_DDR)) {
+		/*
+		 * DDR is brought up by the in-tree LPDDR4X driver (a UCLASS_RAM
+		 * device bound to the spacemit,k1-ddr node) rather than by the
+		 * vendor ddr_fw.bin blob.
+		 */
+		struct udevice *ram_dev;
+
+		ret = uclass_get_device(UCLASS_RAM, 0, &ram_dev);
+		if (ret)
+			panic("DRAM init failed: %d\n", ret);
+	} else {
+		ddr_early_init();
+	}
 	nor_early_init();
 }
 
