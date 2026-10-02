@@ -171,3 +171,32 @@
 		broken-flash-reset;
 	};
 };
+
+/*
+ * Without the in-tree LPDDR4X driver (CONFIG_SPACEMIT_K1_DDR), the SPL runs
+ * SpacemiT's DDR training firmware, which binman appends to it as upstream's
+ * K1 boards do. DDR_FW_FILE names the firmware; without it the section holds
+ * an empty placeholder and the in-tree driver's builds do not use it.
+ */
+&binman {
+	u-boot-spl-ddr {
+		type = "section";
+		filename = "u-boot-spl-ddr.bin";
+		pad-byte = <0xff>;
+
+		u-boot-spl {
+		};
+
+		ddr-fw {
+			type = "blob";
+			filename = "ddr_fw.bin";
+			align = <64>;
+		};
+
+		u-boot-any {
+			type = "section";
+			size = <0>;
+			offset = <0>;
+		};
+	};
+};
