@@ -39,6 +39,7 @@
 #define PCIE_PU_ADDR_CLK_CFG		0x0008
 #define PLL_READY			BIT(0)
 #define CFG_INTERNAL_TIMER_ADJ		GENMASK(10, 7)
+#define TIMER_ADJ_USB			0x2
 #define TIMER_ADJ_PCIE			0x6
 #define CFG_SW_PHY_INIT_DONE		BIT(11)
 
@@ -58,6 +59,7 @@
 #define FREF_24M			0x1
 #define SSC_DEP_SEL			GENMASK(19, 16)
 #define SSC_DEP_NONE			0x0
+#define SSC_DEP_5000PPM			0xa
 
 /* PCIe PHY configuration */
 #define PCIE_PU_PLL_2			0x004c
@@ -79,6 +81,9 @@
 #define PCIE_TX_REG1			0x0064
 #define TX_RTERM_REG			GENMASK(15, 12)
 #define TX_RTERM_SEL			BIT(25)
+
+/* Zeroed for the combo PHY operating in USB 3 mode */
+#define USB3_TEST_CTRL			0x0068
 
 /* PHY calibration values */
 #define PCIE_RCAL_RESULT		0x0084
@@ -216,11 +221,9 @@ static int k1_pcie_phy_init(struct phy *phy)
 	u32 val;
 	int i, lane;
 
-	/* If combo PHY is configured for USB 3 mode */
-	if (k1_phy->is_combo && phy->id == PHY_TYPE_USB3) {
-		k1_combo_phy_sel(k1_phy, true);
+	/* USB 3 mode is set up at power-on, see k1_pcie_phy_power_on() */
+	if (k1_phy->is_combo && phy->id == PHY_TYPE_USB3)
 		return 0;
-	}
 
 	/* For combo PHY, ensure it's in PCIe mode */
 	if (k1_phy->is_combo)
@@ -364,6 +367,78 @@ static int k1_pcie_phy_init(struct phy *phy)
 	return 0;
 }
 
+/* Only called for the combo PHY */
+static int k1_combo_phy_usb3_power_on(struct phy *phy)
+{
+	struct k1_pcie_phy *k1_phy = dev_get_priv(phy->dev);
+	void __iomem *apmu = k1_phy->apmu_base;
+	void __iomem *regs = k1_phy->regs;
+	int ret;
+	u32 val;
+
+	/*
+	 * Point the lane at the USB 3 controller.  Left in PCIe mode, the
+	 * PHY PLL does not lock, the controller gets no PIPE clock and the
+	 * xHCI reset never completes.
+	 */
+	k1_combo_phy_sel(k1_phy, true);
+
+	/* Make sure the PHY is not held in reset by the PCIe port A logic */
+	val = readl(apmu + PCIE_CLK_RES_CTRL);
+	val &= ~PCIE_APP_HOLD_PHY_RST;
+	writel(val, apmu + PCIE_CLK_RES_CTRL);
+
+	/* We're not doing any testing */
+	writel(0, regs + USB3_TEST_CTRL);
+
+	/* Configure the PLL for USB 3 */
+	val = readl(regs + PCIE_PU_ADDR_CLK_CFG);
+	val &= ~CFG_INTERNAL_TIMER_ADJ;
+	val |= FIELD_PREP(CFG_INTERNAL_TIMER_ADJ, TIMER_ADJ_USB);
+	writel(val, regs + PCIE_PU_ADDR_CLK_CFG);
+
+	/* 5000 ppm spread spectrum, 24 MHz reference, no 100 MHz input */
+	val = readl(regs + PCIE_PU_PLL_1);
+	val &= ~(SSC_DEP_SEL | REF_100_WSSC | FREF_SEL);
+	val |= FIELD_PREP(SSC_DEP_SEL, SSC_DEP_5000PPM);
+	val |= FIELD_PREP(FREF_SEL, FREF_24M);
+	writel(val, regs + PCIE_PU_PLL_1);
+
+	/* Forcing receiver retry is for PCIe only */
+	val = readl(regs + PCIE_RC_DONE_STATUS);
+	val &= ~CFG_FORCE_RCV_RETRY;
+	writel(val, regs + PCIE_RC_DONE_STATUS);
+
+	/* PLL configuration is done; start the PLL */
+	val = readl(regs + PCIE_PU_ADDR_CLK_CFG);
+	val |= CFG_SW_PHY_INIT_DONE;
+	writel(val, regs + PCIE_PU_ADDR_CLK_CFG);
+
+	ret = readl_poll_timeout(regs + PCIE_PU_ADDR_CLK_CFG, val,
+				 val & PLL_READY, PLL_TIMEOUT_US);
+	if (ret)
+		dev_err(phy->dev, "USB 3 PLL lock timeout, reg[0x08]=0x%08x\n",
+			val);
+
+	return ret;
+}
+
+/*
+ * The DWC3 glue initializes its USB 3 PHY before it enables the
+ * controller's clock and releases its resets, and powers the PHY on
+ * afterwards.  Linux starts the PHY PLL with the controller already
+ * running, so for USB 3 the PHY is set up here rather than at init.
+ */
+static int k1_pcie_phy_power_on(struct phy *phy)
+{
+	struct k1_pcie_phy *k1_phy = dev_get_priv(phy->dev);
+
+	if (k1_phy->is_combo && phy->id == PHY_TYPE_USB3)
+		return k1_combo_phy_usb3_power_on(phy);
+
+	return 0;
+}
+
 static int k1_pcie_phy_exit(struct phy *phy)
 {
 	return 0;
@@ -393,6 +468,7 @@ static int k1_pcie_phy_of_xlate(struct phy *phy,
 static const struct phy_ops k1_pcie_phy_ops = {
 	.of_xlate	= k1_pcie_phy_of_xlate,
 	.init		= k1_pcie_phy_init,
+	.power_on	= k1_pcie_phy_power_on,
 	.exit		= k1_pcie_phy_exit,
 };
 
