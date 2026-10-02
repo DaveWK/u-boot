@@ -138,3 +138,36 @@
 &pcie1 {
 	num-lanes = <2>;
 };
+
+/*
+ * The boot flash: an XMC XM25QU128C (16 MiB, 1.8 V) on the QSPI controller.
+ * Only the SPI-boot variant (orangepi_rv2_spi_defconfig) enables a driver
+ * for it; its SPL loads u-boot.itb from CONFIG_SYS_SPI_U_BOOT_OFFS.
+ *
+ * k1-pinctrl.dtsi declares the QSPI pads at 3.3 V, but this board's flash
+ * is a 1.8 V part on buck3_1v8 and the BootROM reads it through the same
+ * pads, so the bank runs at 1.8 V. Declare that, so the pin controller
+ * does not switch the bank's IO domain to 3.3 V thresholds; 21 mA is the
+ * 1.8 V drive-strength step nearest the 3.3 V group's 19 mA.
+ */
+&qspi_cfg {
+	qspi-pins {
+		drive-strength = <21>;
+		power-source = <1800>;
+	};
+
+	qspi-cs1-pins {
+		drive-strength = <21>;
+		power-source = <1800>;
+	};
+};
+
+&qspi {
+	bootph-pre-ram;
+
+	flash@0 {
+		bootph-pre-ram;
+		m25p,fast-read;
+		broken-flash-reset;
+	};
+};
