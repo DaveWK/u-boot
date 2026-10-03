@@ -15,4 +15,6 @@ config PHY_SPACEMIT_K1_USB2
 	depends on PHY && CLK
 	help
 	  Enable this to support the USB 2.0 (UTMI) PHY of the SpacemiT K1
-	  SoC, used by its DWC3 USB 3 controller.
+	  SoC, used by its DWC3 USB 3 controller. The driver configures the
+	  PLL for the 24 MHz reference clock, releases the internal resets
+	  and enables the PHY clocks before the controller is started.

@@ -515,7 +515,7 @@ static const struct dwc3_glue_ops qcom_flat_dt_ops = {
 	.glue_get_ctrl_dev = dwc3_flat_dt_get_ctrl_dev,
 };
 
-static const struct dwc3_glue_ops rk_ops = {
+static const struct dwc3_glue_ops flat_dt_ops = {
 	.glue_get_ctrl_dev = dwc3_flat_dt_get_ctrl_dev,
 };
 
@@ -718,12 +718,13 @@ static const struct udevice_id dwc3_glue_ids[] = {
 	{ .compatible = "ti,dwc3", .data = (ulong)&ti_ops },
 	{ .compatible = "ti,am437x-dwc3", .data = (ulong)&ti_ops },
 	{ .compatible = "ti,am654-dwc3" },
-	{ .compatible = "rockchip,rk3328-dwc3", .data = (ulong)&rk_ops },
+	{ .compatible = "rockchip,rk3328-dwc3", .data = (ulong)&flat_dt_ops },
 	{ .compatible = "rockchip,rk3399-dwc3" },
-	{ .compatible = "rockchip,rk3528-dwc3", .data = (ulong)&rk_ops },
-	{ .compatible = "rockchip,rk3568-dwc3", .data = (ulong)&rk_ops },
-	{ .compatible = "rockchip,rk3576-dwc3", .data = (ulong)&rk_ops },
-	{ .compatible = "rockchip,rk3588-dwc3", .data = (ulong)&rk_ops },
+	{ .compatible = "rockchip,rk3528-dwc3", .data = (ulong)&flat_dt_ops },
+	{ .compatible = "rockchip,rk3568-dwc3", .data = (ulong)&flat_dt_ops },
+	{ .compatible = "rockchip,rk3576-dwc3", .data = (ulong)&flat_dt_ops },
+	{ .compatible = "rockchip,rk3588-dwc3", .data = (ulong)&flat_dt_ops },
+	{ .compatible = "spacemit,k1-dwc3", .data = (ulong)&flat_dt_ops },
 	{ .compatible = "qcom,dwc3", .data = (ulong)&qcom_ops },
 	{ .compatible = "qcom,snps-dwc3", .data = (ulong)&qcom_flat_dt_ops },
 	{ .compatible = "fsl,imx8mp-dwc3", .data = (ulong)&imx8mp_ops },
