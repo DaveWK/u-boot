@@ -142,6 +142,18 @@
 	status = "okay";
 };
 
+&i2c2 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&i2c2_0_cfg>;
+	status = "okay";
+
+	eeprom@50 {
+		compatible = "atmel,24c02";
+		reg = <0x50>;
+		read-only;
+	};
+};
+
 &i2c8 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&i2c8_cfg>;
@@ -288,6 +300,18 @@
 
 &pcie2 {
 	status = "okay";
+};
+
+&qspi_cfg {
+	qspi-pins {
+		drive-strength = <21>;
+		power-source = <1800>;
+	};
+
+	qspi-cs1-pins {
+		drive-strength = <21>;
+		power-source = <1800>;
+	};
 };
 
 &qspi {
