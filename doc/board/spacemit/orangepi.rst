@@ -37,7 +37,7 @@ and must not use this single-rank configuration as a tested profile.
 DDR-workaround removal is follow-up work after initial board support.
 
 The series depends on the K1 storage, combo-PHY, PCIe and SPL fixes,
-generic K1 USB support, and Linux EEPROM/QSPI DT prerequisites. The
+K1 EMAC, generic K1 USB support, and Linux EEPROM/QSPI DT prerequisites. The
 EEPROM is read-only in Linux; factory EEPROM writes were not tested.
 
 The first bootable filesystem partition setting finds the existing
