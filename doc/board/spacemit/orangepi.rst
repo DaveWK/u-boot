@@ -16,12 +16,17 @@ the SPL control tree explicitly for each initial board profile::
    make O=build-r2s spacemit_k1_defconfig
    make O=build-r2s CROSS_COMPILE=riscv64-linux-gnu- \
        DEVICE_TREE=spacemit/k1-orangepi-r2s OPENSBI=/path/fw_dynamic.bin \
-       BINMAN_INDIRS=/path/to/ddr-firmware
+       BINMAN_INDIRS=/path/to/ddr-firmware \
+       DDR_FW_FILE=/path/to/ddr-firmware/ddr_fw.bin
 
 For RV2, use another output directory and
 ``DEVICE_TREE=spacemit/k1-orangepi-rv2``. Both FITs include Banana Pi F3,
 MusePi Pro, OrangePi R2S and OrangePi RV2 configurations. The default DT
 and unknown-name fallback remain MusePi Pro.
+
+Supply ``DDR_FW_FILE`` explicitly. The K1 build helper otherwise creates
+an empty placeholder which can take precedence over ``BINMAN_INDIRS``.
+Verify the DDR blob is present before packaging the signed FSBL.
 
 SPL uses its build-selected control DT before DDR training. Therefore
 the multi-board FIT does not imply one validated SPL for all boards.
