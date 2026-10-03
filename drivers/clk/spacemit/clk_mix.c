@@ -9,7 +9,6 @@
  */
 
 #include <dm/device.h>
-#include <dm/device-internal.h>
 #include <dm/uclass.h>
 #include <div64.h>
 #include <regmap.h>
@@ -138,65 +137,6 @@ ccu_mix_calc_best_rate(struct clk *clk, unsigned long rate,
 	return best_rate;
 }
 
-/*
- * U-Boot's CCF has no determine_rate, so the parent is chosen here along with
- * the divider. The mux is programmed from the chosen parent rather than left
- * where it was found: init falls back to parents[0] when the hardware mux
- * selects a source this build does not list (the SPL lists only a subset), and
- * the clock would otherwise keep running from that source at a rate nobody
- * computed. Mux and divider are written together and latched by one frequency
- * change, and nothing is written when both already match, so a clock left
- * running by an earlier stage is not disturbed.
- */
-static unsigned long ccu_mix_set_rate(struct clk *clk, unsigned long rate)
-{
-	struct ccu_mix *mix = clk_to_ccu_mix(clk);
-	struct ccu_common *common = &mix->common;
-	struct ccu_div_config *div = &mix->div;
-	struct ccu_mux_config *mux = &mix->mux;
-	struct clk *parent = NULL;
-	unsigned long parent_rate;
-	u32 target_div = 0, mask, val;
-	int i, ret;
-
-	ccu_mix_calc_best_rate(clk, rate, &parent, &parent_rate, &target_div);
-
-	mask = GENMASK(div->width + div->shift - 1, div->shift);
-	val = target_div << div->shift;
-
-	if (mux->width && parent) {
-		for (i = 0; i < common->num_parents; i++)
-			if (!strcmp(parent->dev->name, common->parents[i]))
-				break;
-		if (i == common->num_parents)
-			return -EINVAL;
-		mask |= GENMASK(mux->width + mux->shift - 1, mux->shift);
-		val |= i << mux->shift;
-	} else {
-		parent = NULL;
-	}
-
-	if ((ccu_read(common, ctrl) & mask) == val)
-		return 0;
-
-	if (parent && clk->dev->parent != parent->dev) {
-		ret = clk_enable(parent);
-		if (ret)
-			return ret;
-	}
-
-	ccu_update(common, ctrl, mask, val);
-
-	ret = ccu_mix_trigger_fc(clk);
-	if (ret)
-		return ret;
-
-	if (parent && clk->dev->parent != parent->dev)
-		return device_reparent(clk->dev, parent->dev);
-
-	return 0;
-}
-
 static u8 ccu_mux_get_parent(struct clk *clk)
 {
 	struct ccu_mix *mix = clk_to_ccu_mix(clk);
@@ -209,23 +149,78 @@ static u8 ccu_mux_get_parent(struct clk *clk)
 	return parent;
 }
 
+static int ccu_mux_parent_index(struct ccu_common *common, struct clk *parent)
+{
+	int i;
+
+	for (i = 0; i < common->num_parents; i++)
+		if (!strcmp(parent->dev->name, common->parents[i]))
+			return i;
+
+	return -EINVAL;
+}
+
+/*
+ * U-Boot's CCF has no determine_rate step, so the parent giving the best rate
+ * is chosen here. As in Linux, the clock is reparented first and the divider
+ * programmed after. Reparent also when the framework already has the chosen
+ * parent but the mux selects another source: init registers a clock under
+ * parents[0] when the mux selects a source this build does not list (the SPL
+ * lists only a subset). Nothing is written when mux and divider already match,
+ * so a clock left running by an earlier stage is not disturbed.
+ */
+static unsigned long ccu_mix_set_rate(struct clk *clk, unsigned long rate)
+{
+	struct ccu_mix *mix = clk_to_ccu_mix(clk);
+	struct ccu_common *common = &mix->common;
+	struct ccu_div_config *div = &mix->div;
+	struct ccu_mux_config *mux = &mix->mux;
+	struct clk *parent = NULL;
+	unsigned long parent_rate;
+	u32 current_div, target_div = 0, mask;
+	int index, ret;
+
+	ccu_mix_calc_best_rate(clk, rate, &parent, &parent_rate, &target_div);
+
+	if (mux->width && parent) {
+		index = ccu_mux_parent_index(common, parent);
+		if (index < 0)
+			return index;
+
+		if (clk->dev->parent != parent->dev ||
+		    ccu_mux_get_parent(clk) != index) {
+			ret = clk_set_parent(clk, parent);
+			if (ret)
+				return ret;
+		}
+	}
+
+	current_div = ccu_read(common, ctrl) >> div->shift;
+	current_div &= (1 << div->width) - 1;
+
+	if (current_div == target_div)
+		return 0;
+
+	mask = GENMASK(div->width + div->shift - 1, div->shift);
+
+	ccu_update(common, ctrl, mask, target_div << div->shift);
+
+	return ccu_mix_trigger_fc(clk);
+}
+
 static int ccu_mux_set_parent(struct clk *clk, struct clk *parent)
 {
 	struct ccu_common *common = clk_to_ccu_common(clk);
 	struct ccu_mix *mix = clk_to_ccu_mix(clk);
 	struct ccu_mux_config *mux = &mix->mux;
 	u32 mask;
-	int i = 0;
+	int i;
 
 	mask = GENMASK(mux->width + mux->shift - 1, mux->shift);
 
-	for (i = 0; i < common->num_parents; i++) {
-		if (!strcmp(parent->dev->name, common->parents[i]))
-			break;
-	}
-
-	if (i == common->num_parents)
-		return -EINVAL;
+	i = ccu_mux_parent_index(common, parent);
+	if (i < 0)
+		return i;
 
 	ccu_update(&mix->common, ctrl, mask, i << mux->shift);
 
@@ -237,10 +232,10 @@ static int ccu_mux_set_parent(struct clk *clk, struct clk *parent)
  * fastest parent that does not exceed the requested rate, as the generic
  * clk_mux does unless told to round to the closest: a consumer that prepared
  * for a rate, as a CPU cluster does by raising its supply to the operating
- * point first, must not end up faster than it asked for. The new parent is
- * enabled before the switch, which for the CPU clusters powers up and locks
- * PLL3; after a failed switch it stays enabled, as the mux may already have
- * moved onto it.
+ * point first, must not end up faster than it asked for. clk_set_parent()
+ * enables the new parent before switching an enabled clock and updates the
+ * framework parent. For the CPU clusters, enabled by the CPU driver's probe,
+ * this powers up PLL3 and waits for it to lock before changing the mux.
  */
 static ulong ccu_mux_set_rate(struct clk *clk, ulong rate)
 {
@@ -276,15 +271,7 @@ static ulong ccu_mux_set_rate(struct clk *clk, ulong rate)
 	if (clk->dev->parent == best->dev)
 		return best_rate;
 
-	ret = clk_enable(best);
-	if (ret)
-		return ret;
-
-	ret = ccu_mux_set_parent(clk, best);
-	if (ret)
-		return ret;
-
-	ret = device_reparent(clk->dev, best->dev);
+	ret = clk_set_parent(clk, best);
 	if (ret)
 		return ret;
 
