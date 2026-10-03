@@ -1,112 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later OR MIT
 
-#include "binman.dtsi"
-#include "k1-opp-u-boot.dtsi"
-
-/*
- * U-Boot-only additions for the OrangePi RV2. The hardware description itself
- * comes from the upstream device tree (spacemit/k1-orangepi-rv2.dts); this
- * file adds what SPL needs.
- */
-
-&{/soc} {
-	bootph-pre-ram;
-
-	/*
-	 * The DDR controller is not described upstream. SPL's LPDDR4X init and
-	 * ddr_get_density() both read their configuration from here.
-	 *
-	 * datarate 2400 is the rate this board runs (4 GiB LPDDR4X, single
-	 * rank). The frequency table also offers 3200, but the same DRAM on the
-	 * OrangePi R2S failed the SPL DRAM pattern test at 3200 on 2026-08-20;
-	 * it has not been tried on this board.
-	 *
-	 * cs-num 1: the K1's CS1 MAP register reads back populated even when
-	 * CS1 is not, so counting both chip selects double-counts a single-rank
-	 * board; the vendor firmware, which counts both, reports 8 GiB on the
-	 * 4 GiB unit. An 8 GiB dual-rank RV2 needs cs-num 2.
-	 */
-	dramc: ddr@c0000000 {
-		compatible = "spacemit,k1-ddr";
-		reg = <0x0 0xc0000000 0x0 0x400000>;
-		datarate = <2400>;
-		cs-num = <1>;
-		type = "LPDDR4X";
-		bootph-pre-ram;
-	};
-};
-
-&{/cpus} {
-	bootph-pre-ram;
-};
-
-/*
- * Clock infrastructure. The K1 clock driver is a DM/CCF driver bound to these
- * syscon and oscillator nodes, so every one of them has to exist in the SPL
- * device tree -- without them spl_early_init() fails in uclass setup (-96)
- * before the console is even up.
- */
-&osc_32k {
-	bootph-pre-ram;
-};
-
-&vctcxo_1m {
-	bootph-pre-ram;
-};
-
-&vctcxo_3m {
-	bootph-pre-ram;
-};
-
-&vctcxo_24m {
-	bootph-pre-ram;
-};
-
-&pll {
-	bootph-pre-ram;
-};
-
-&syscon_mpmu {
-	bootph-pre-ram;
-};
-
-&syscon_apmu {
-	bootph-pre-ram;
-};
-
-&syscon_apbc {
-	bootph-pre-ram;
-};
-
-&cpu_0 {
-	bootph-pre-ram;
-};
-
-&clint {
-	clock-frequency = <24000000>;
-	bootph-pre-ram;
-};
-
-&uart0 {
-	bootph-pre-ram;
-};
-
-/*
- * The microSD slot is an SPL boot device. Its parent simple-bus must be bound
- * in SPL too, or DM never scans down to it. The io clock runs at 204.8 MHz
- * (PLL1 409.6 MHz / 2): the OS reads the live rate into the 8-bit SDHCI v3
- * base-clock field, which 409.6 MHz overflows. no-1-8-v keeps the card at
- * 3.3 V, so the OS does not inherit a card switched to 1.8 V signalling. The
- * card-detect line is pulled up, as on the MusePi Pro.
- */
-&{/soc/storage-bus} {
-	bootph-pre-ram;
-};
-
-/* The eMMC module socket: the same 204.8 MHz io clock. */
-&emmc {
-	max-frequency = <204800000>;
-};
+#include "k1-orangepi-u-boot.dtsi"
 
 &sdhci0 {
 	cd-gpios = <&gpio K1_GPIO(80) (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
@@ -115,52 +9,21 @@
 	bootph-pre-ram;
 };
 
-/*
- * PCIe, so that U-Boot can boot from an NVMe drive. Upstream's RV2 tree
- * describes both ports (pcie1 and pcie2) with the GPIO116 slot supply.
- *
- * PERST# only, as in FreeBSD's k1-pinctrl.dtsi: with CLKREQ# muxed the
- * controller gates its DBI clock whenever the endpoint leaves CLKREQ#
- * high, and the next DBI access hangs the hart.
- */
+/* Avoid gating the DBI clock while probing the bootloader PCIe host. */
 &pcie1_3_cfg {
 	pcie1-3-pins {
-		pinmux = <K1_PADCONF(59, 4)>;	/* PERST# */
+		pinmux = <K1_PADCONF(59, 4)>;
 	};
 };
 
 &pcie2_4_cfg {
 	pcie2-4-pins {
-		pinmux = <K1_PADCONF(62, 4)>;	/* PERST# */
+		pinmux = <K1_PADCONF(62, 4)>;
 	};
 };
 
-/* Port B carries two lanes. */
 &pcie1 {
 	num-lanes = <2>;
-};
-
-/*
- * The boot flash: an XMC XM25QU128C (16 MiB, 1.8 V) on the QSPI controller.
- * Only the SPI-boot variant (orangepi_rv2_spi_defconfig) enables a driver
- * for it; its SPL loads u-boot.itb from CONFIG_SYS_SPI_U_BOOT_OFFS.
- *
- * k1-pinctrl.dtsi declares the QSPI pads at 3.3 V, but this board's flash
- * is a 1.8 V part on buck3_1v8 and the BootROM reads it through the same
- * pads, so the bank runs at 1.8 V. Declare that, so the pin controller
- * does not switch the bank's IO domain to 3.3 V thresholds; 21 mA is the
- * 1.8 V drive-strength step nearest the 3.3 V group's 19 mA.
- */
-&qspi_cfg {
-	qspi-pins {
-		drive-strength = <21>;
-		power-source = <1800>;
-	};
-
-	qspi-cs1-pins {
-		drive-strength = <21>;
-		power-source = <1800>;
-	};
 };
 
 &qspi {
@@ -168,111 +31,17 @@
 
 	flash@0 {
 		bootph-pre-ram;
-		m25p,fast-read;
-		broken-flash-reset;
 	};
 };
 
-/*
- * The TLV EEPROM (an AT24C02 at 0x50 on i2c2, as on upstream's other K1
- * boards). The SPL reads the product name and the DDR rank count from it;
- * U-Boot proper reads the MAC addresses (CONFIG_ID_EEPROM).
- */
-&i2c2 {
-	pinctrl-names = "default";
-	pinctrl-0 = <&i2c2_0_cfg>;
-	status = "okay";
-	bootph-pre-ram;
-
-	eeprom@50 {
-		compatible = "atmel,24c02";
-		reg = <0x50>;
-		pagesize = <16>;
-		read-only;
-		size = <256>;
+/* Retained initial single-rank DDR workarounds; removal is follow-up work. */
+&{/soc} {
+	dramc: ddr@c0000000 {
+		compatible = "spacemit,k1-ddr";
+		reg = <0x0 0xc0000000 0x0 0x400000>;
+		datarate = <2400>;
+		cs-num = <1>;
+		type = "LPDDR4X";
 		bootph-pre-ram;
 	};
-};
-
-/*
- * Without the in-tree LPDDR4X driver (CONFIG_SPACEMIT_K1_DDR), the SPL runs
- * SpacemiT's DDR training firmware, which binman appends to it as upstream's
- * K1 boards do. DDR_FW_FILE names the firmware; without it the section holds
- * an empty placeholder and the in-tree driver's builds do not use it.
- */
-&binman {
-	u-boot-spl-ddr {
-		type = "section";
-		filename = "u-boot-spl-ddr.bin";
-		pad-byte = <0xff>;
-
-		u-boot-spl {
-		};
-
-		ddr-fw {
-			type = "blob";
-			filename = "ddr_fw.bin";
-			align = <64>;
-		};
-
-		u-boot-any {
-			type = "section";
-			size = <0>;
-			offset = <0>;
-		};
-	};
-};
-
-/*
- * The cores run from buck1 of the SpacemiT P1 PMIC, which upstream's tree
- * describes but leaves without a consumer. Linux caps buck1 and buck2, the
- * CPU core rails, at the 1.05 V of the fastest operating point (merged after
- * v7.2), and gives every CPU node buck1 as its cpu-supply (posted after
- * v7.2). board_init() raises the rail through cpu-supply before it moves the
- * clusters to their fastest operating point.
- */
-&i2c8 {
-	pmic@41 {
-		regulators {
-			buck1_0v9: buck1 {
-				regulator-max-microvolt = <1050000>;
-			};
-
-			buck2 {
-				regulator-max-microvolt = <1050000>;
-			};
-		};
-	};
-};
-
-&cpu_0 {
-	cpu-supply = <&buck1_0v9>;
-};
-
-&cpu_1 {
-	cpu-supply = <&buck1_0v9>;
-};
-
-&cpu_2 {
-	cpu-supply = <&buck1_0v9>;
-};
-
-&cpu_3 {
-	cpu-supply = <&buck1_0v9>;
-};
-
-&cpu_4 {
-	cpu-supply = <&buck1_0v9>;
-};
-
-&cpu_5 {
-	cpu-supply = <&buck1_0v9>;
-};
-
-&cpu_6 {
-	cpu-supply = <&buck1_0v9>;
-};
-
-&cpu_7 {
-	cpu-supply = <&buck1_0v9>;
 };

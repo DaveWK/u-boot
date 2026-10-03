@@ -8,4 +8,5 @@ SpacemiT
    bananapi-f3
    k1-mmc
    k1-spl
+   orangepi
 
